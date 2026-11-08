@@ -83,6 +83,8 @@ except Exception:
         meta = json.load(urllib.request.urlopen("https://pypi.org/pypi/basicsr/1.4.2/json"))
         url = [u["url"] for u in meta["urls"] if u["packagetype"] == "sdist"][0]
         urllib.request.urlretrieve(url, "/tmp/basicsr.tar.gz")
+        import shutil
+        shutil.rmtree("/tmp/bsr", ignore_errors=True)
         tarfile.open("/tmp/basicsr.tar.gz").extractall("/tmp/bsr")
         d = glob.glob("/tmp/bsr/basicsr-*")[0]
         s = open(f"{d}/setup.py").read()
@@ -90,9 +92,9 @@ except Exception:
                    s, flags=re.S)
         open(f"{d}/setup.py", "w").write(s)
         deg = f"{d}/basicsr/data/degradations.py"
-        open(deg, "w").write(open(deg).read().replace("torchvision.transforms.functional_tensor",
-                                                      "torchvision.transforms.functional"))
-        sh(f"{sys.executable} -m pip install -q --no-deps --no-build-isolation {d}")
+        txt = open(deg).read().replace("torchvision.transforms.functional_tensor", "torchvision.transforms.functional")
+        open(deg, "w").write(txt)
+        sh(f"{sys.executable} -m pip install -q --force-reinstall --no-deps --no-build-isolation {d}")
         pip("gfpgan", extra="--no-deps")
         print("  klar")
     except Exception as e:
