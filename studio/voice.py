@@ -51,14 +51,16 @@ def default_reference():
 
 
 def ensure_tts_env(progress=None):
-    if os.path.exists(TTS_PY):
+    ok = "/content/ttsenv/.fv_ok"
+    if os.path.exists(ok):
         return
     if progress:
         progress(0.01, desc="Installerar den naturliga rösten (bara första gången, ca 3–5 min)")
     import sys
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "uv"], check=True)
-    subprocess.run(["uv", "venv", "-q", "--python", sys.executable, "/content/ttsenv"], check=True)
+    subprocess.run(["uv", "venv", "-q", "--clear", "--python", sys.executable, "/content/ttsenv"], check=True)
     subprocess.run(["uv", "pip", "install", "-q", "--python", TTS_PY, "chatterbox-tts"], check=True)
+    open(ok, "w").write("ok")
 
 
 def speak(text, engine=ENGINES[0], ref=None, style="Mansröst, lugn och äldre", speed=1.0, emotion=0.5,
