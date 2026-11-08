@@ -2,6 +2,7 @@
 import os
 import sys
 import traceback
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gradio as gr  # noqa: E402
@@ -235,5 +236,11 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     f_btn.click(do_film, [f_files, f_lines, f_aspect, f_engine, f_ref, f_speed, f_mood, f_nat, f_subs, f_music], f_out)
 
 if __name__ == "__main__":
+    # Förladda modellerna i bakgrunden (inte när de sparas i Drive – det skulle fylla din Drive)
+    if os.environ.get("FV_PREFETCH", "1") == "1" and os.environ.get("FV_DRIVE_MODELS") != "1":
+        import subprocess as _sp
+        from common import env as _env
+        _sp.Popen([sys.executable, str(Path(__file__).with_name("prefetch.py"))], env={**_env(), "HF_HUB_DISABLE_PROGRESS_BARS": "1"})
+        print("⏬ Laddar ner AI-modellerna i bakgrunden – du kan börja direkt.", flush=True)
     app.queue(default_concurrency_limit=1).launch(share=True, allowed_paths=[str(OUT), "/content", "/kaggle/working"], debug=True,
                                                  theme=gr.themes.Soft(primary_hue="green"))
