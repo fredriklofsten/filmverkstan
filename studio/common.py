@@ -16,7 +16,15 @@ DRIVE_ROOT = Path("/content/drive/MyDrive/Filmverkstan")
 DRIVE_MOUNTED = Path("/content/drive/MyDrive").exists()
 
 # Resultat sparas i Drive om den är ansluten, annars lokalt i Colab
-OUT = (DRIVE_ROOT / "resultat") if DRIVE_MOUNTED else Path("/content/fv_resultat")
+KAGGLE = Path("/kaggle/working").exists()
+if os.environ.get("FV_OUT"):
+    OUT = Path(os.environ["FV_OUT"])
+elif DRIVE_MOUNTED:
+    OUT = DRIVE_ROOT / "resultat"
+elif KAGGLE:
+    OUT = Path("/kaggle/working/resultat")  # syns under Output i Kaggle och kan laddas ner
+else:
+    OUT = Path("/content/fv_resultat")
 OUT.mkdir(parents=True, exist_ok=True)
 TMP = Path("/content/fv_tmp")
 TMP.mkdir(parents=True, exist_ok=True)

@@ -23,3 +23,8 @@ Beskrivningar kan skrivas på svenska – de översätts automatiskt (Helsinki-N
 
 ## Licenser
 Modellerna har egna licenser (LTX-Video: Lightricks open weights-licens, RealVisXL: OpenRAIL++, SadTalker: Apache 2.0, Chatterbox: MIT, Piper-röst: se rhasspy/piper-voices). Läs dem innan du använder resultat kommersiellt.
+
+## Kaggle (2 grafikkort, ca 30 h/vecka)
+1. Skapa ett gratis konto på kaggle.com och verifiera telefonnumret (Settings → Phone verification).
+2. **Create → New Notebook → File → Import Notebook → GitHub** och klistra in `fredriklofsten/filmverkstan`, välj `Filmverkstan_Kaggle.ipynb`.
+3. **Session options:** Accelerator **GPU T4 x2**, Internet **On**. Tryck ▶.

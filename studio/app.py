@@ -1,4 +1,4 @@
-"""Filmverkstan Studio – gränssnittet. Startas från Colab-notebooken."""
+"""Filmverkstan Studio – gränssnittet. Startas från Colab- eller Kaggle-notebooken."""
 import os
 import sys
 import traceback
@@ -9,7 +9,7 @@ import gradio as gr  # noqa: E402
 import montage  # noqa: E402
 import music  # noqa: E402
 import voice  # noqa: E402
-from common import OUT, DRIVE_MOUNTED, run_worker, WorkerError  # noqa: E402
+from common import OUT, DRIVE_MOUNTED, KAGGLE, run_worker, WorkerError  # noqa: E402
 from translate import to_english  # noqa: E402
 
 VERSION = "2.0"
@@ -20,7 +20,8 @@ def gpu_text():
         import torch
         if torch.cuda.is_available():
             p = torch.cuda.get_device_properties(0)
-            return f"{p.name}, {p.total_memory / 1024**3:.0f} GB"
+            n = torch.cuda.device_count()
+            return (f"{n} × " if n > 1 else "") + f"{p.name}, {p.total_memory / 1024**3:.0f} GB"
     except Exception:
         pass
     return "inget grafikkort"
@@ -117,7 +118,9 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     gallery_paths = gr.State([])
     gr.Markdown(f"# 🎬 Filmverkstan Studio <small>v{VERSION}</small>\n"
                 f"Grafikkort: **{gpu_text()}** · Resultat sparas i: `{OUT}`"
-                + (" (Google Drive ✅)" if DRIVE_MOUNTED else " (försvinner när Colab stängs – ladda ner det du vill spara)"))
+                + (" (Google Drive ✅)" if DRIVE_MOUNTED else
+                   " (Kaggle: syns under Output – spara versionen eller ladda ner)" if KAGGLE else
+                   " (försvinner när Colab stängs – ladda ner det du vill spara)"))
 
     with gr.Tab("1. Bild"):
         with gr.Row():
@@ -232,5 +235,5 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     f_btn.click(do_film, [f_files, f_lines, f_aspect, f_engine, f_ref, f_speed, f_mood, f_nat, f_subs, f_music], f_out)
 
 if __name__ == "__main__":
-    app.queue(default_concurrency_limit=1).launch(share=True, allowed_paths=[str(OUT), "/content"], debug=True,
+    app.queue(default_concurrency_limit=1).launch(share=True, allowed_paths=[str(OUT), "/content", "/kaggle/working"], debug=True,
                                                  theme=gr.themes.Soft(primary_hue="green"))

@@ -29,14 +29,16 @@ def fit(img, w, h):
 wp(0.02, "Läser in beskrivningen (första gången laddas textmodellen ner, ca 10 GB)")
 from transformers import T5EncoderModel, AutoTokenizer
 from diffusers import LTXImageToVideoPipeline, LTXConditionPipeline, FlowMatchEulerDiscreteScheduler
+TE_DEV = "cuda:1" if torch.cuda.device_count() > 1 else "cuda:0"  # två kort (Kaggle): textmodellen på kort 2
 tok = AutoTokenizer.from_pretrained("google-t5/t5-base")  # samma ordlista som LTX, färdigkonverterad
 te = T5EncoderModel.from_pretrained("city96/t5-v1_1-xxl-encoder-bf16", torch_dtype=torch.bfloat16,
-                                    device_map="cuda", low_cpu_mem_usage=True)
+                                    device_map=TE_DEV, low_cpu_mem_usage=True)
 enc = LTXImageToVideoPipeline(scheduler=FlowMatchEulerDiscreteScheduler(), vae=None, text_encoder=te,
                               tokenizer=tok, transformer=None)
 with torch.no_grad():
-    pe, pm, ne, nm = enc.encode_prompt(a["prompt"], NEG, do_classifier_free_guidance=True, device="cuda")
-pe, ne = pe.half(), ne.half()
+    pe, pm, ne, nm = enc.encode_prompt(a["prompt"], NEG, do_classifier_free_guidance=True, device=TE_DEV)
+pe, ne = pe.half().to("cuda:0"), ne.half().to("cuda:0")
+pm, nm = pm.to("cuda:0"), nm.to("cuda:0")
 del enc, te
 gc.collect(); torch.cuda.empty_cache()
 

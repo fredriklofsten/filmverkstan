@@ -20,7 +20,7 @@ def pip(*pkgs, extra=""):
 
 print("1/5 Installerar paket…", flush=True)
 pip('"diffusers>=0.35"', "transformers", "accelerate", "sentencepiece", "protobuf", "imageio", "imageio-ffmpeg",
-    '"gradio>=5"', "piper-tts", "facexlib", "kornia", "yacs", "librosa", "pydub", "audioop-lts", "safetensors",
+    '"gradio>=5"', "piper-tts", "facexlib", "kornia", "yacs", "librosa", "pydub", '"audioop-lts; python_version>=\'3.13\'"', "safetensors",
     "scikit-image", "filterpy", "addict", "lmdb", "yapf", "future")
 
 # ---------- SadTalker ----------
