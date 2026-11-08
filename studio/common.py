@@ -86,11 +86,13 @@ def run_worker(script, args, progress=None, python=None, cwd=None):
                 results.append(line[4:].strip())
             else:
                 print(line, flush=True)
-                tail.append(line)
-                tail = tail[-30:]
+                if "%|" not in line and not line.startswith(("Loading", "Fetching", "Downloading")):
+                    tail.append(line)
+                    tail = tail[-30:]
     rc = p.wait()
     if rc != 0:
-        msg = "\n".join(tail[-12:])
+        errs = [l for l in tail if "Error" in l or "error" in l]
+        msg = (errs[-1] if errs else "\n".join(tail[-6:]))[-600:]
         if rc in (-9, 137):
             msg = "Datorn i molnet fick slut på arbetsminne (RAM). Prova kortare klipp eller lägre kvalitet.\n" + msg
         elif "out of memory" in msg.lower():

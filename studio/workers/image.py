@@ -17,7 +17,10 @@ pipe = StableDiffusionXLPipeline.from_pretrained("SG161222/RealVisXL_V5.0_Lightn
                                                  torch_dtype=torch.float16, variant="fp16").to("cuda")
 pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config, algorithm_type="sde-dpmsolver++",
                                                          use_karras_sigmas=True)
-pipe.enable_vae_slicing()
+try:
+    pipe.vae.enable_slicing()
+except Exception:
+    pass
 
 neg = ("cartoon, painting, illustration, 3d render, deformed, distorted face, bad hands, extra fingers, "
        "blurry, low quality, text, watermark, logo")

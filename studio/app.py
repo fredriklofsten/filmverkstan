@@ -112,7 +112,7 @@ def do_film(files, lines, aspect, engine, ref, speed, mood, nature, subs, music_
 
 # ---------------- gränssnitt ----------------
 TIP = "💡 Skriv gärna på **svenska** – det översätts automatiskt. Beskriv *rörelsen*, t.ex. *hugger ved långsamt, flisor yr, kameran åker närmare*."
-with gr.Blocks(title="Filmverkstan Studio", theme=gr.themes.Soft(primary_hue="green")) as app:
+with gr.Blocks(title="Filmverkstan Studio") as app:
     film = gr.State([])
     gallery_paths = gr.State([])
     gr.Markdown(f"# 🎬 Filmverkstan Studio <small>v{VERSION}</small>\n"
@@ -231,4 +231,5 @@ with gr.Blocks(title="Filmverkstan Studio", theme=gr.themes.Soft(primary_hue="gr
     f_btn.click(do_film, [f_files, f_lines, f_aspect, f_engine, f_ref, f_speed, f_mood, f_nat, f_subs, f_music], f_out)
 
 if __name__ == "__main__":
-    app.queue(default_concurrency_limit=1).launch(share=True, allowed_paths=[str(OUT), "/content"], debug=True)
+    app.queue(default_concurrency_limit=1).launch(share=True, allowed_paths=[str(OUT), "/content"], debug=True,
+                                                 theme=gr.themes.Soft(primary_hue="green"))
