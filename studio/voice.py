@@ -59,7 +59,7 @@ def ensure_tts_env(progress=None):
     import sys
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", "uv"], check=True)
     subprocess.run(["uv", "venv", "-q", "--clear", "--python", sys.executable, "/content/ttsenv"], check=True)
-    subprocess.run(["uv", "pip", "install", "-q", "--python", TTS_PY, "chatterbox-tts"], check=True)
+    subprocess.run(["uv", "pip", "install", "-q", "--python", TTS_PY, "chatterbox-tts", "setuptools<81"], check=True)
     open(ok, "w").write("ok")
 
 
