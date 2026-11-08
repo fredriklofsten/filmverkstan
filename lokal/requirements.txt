@@ -1,0 +1,12 @@
+diffusers>=0.35
+transformers>=4.51
+accelerate
+sentencepiece
+protobuf
+ftfy
+imageio
+imageio-ffmpeg
+gradio>=5
+piper-tts>=1.3
+numpy
+pillow
