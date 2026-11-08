@@ -73,7 +73,7 @@ def do_voice(text, engine, ref, style, speed, emotion, progress=gr.Progress()):
         err(e)
 
 
-def do_talk(image, text, audio, engine, ref, enhance, fast, progress=gr.Progress()):
+def do_talk(image, text, audio, engine, ref, enhance, fast, expr=1.5, progress=gr.Progress()):
     if not image:
         raise gr.Error("Välj ett porträtt där ansiktet syns tydligt.")
     try:
@@ -81,7 +81,7 @@ def do_talk(image, text, audio, engine, ref, enhance, fast, progress=gr.Progress
             if not (text or "").strip():
                 raise gr.Error("Skriv vad personen ska säga, eller ladda upp en ljudfil.")
             audio = voice.speak(text, engine, ref, progress=progress)
-        r = run_worker("talk.py", {"image": image, "audio": audio, "enhance": enhance, "fast": fast}, progress)
+        r = run_worker("talk.py", {"image": image, "audio": audio, "enhance": enhance, "fast": fast, "expression": expr}, progress)
     except gr.Error:
         raise
     except Exception as e:
@@ -158,7 +158,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     with gr.Tab("3. Pratklipp"):
         with gr.Row():
             with gr.Column():
-                t_img = gr.Image(label="Porträtt (ansiktet rakt framifrån fungerar bäst)", type="filepath")
+                t_img = gr.Image(label="Porträtt (rakt framifrån, gärna stängd mun – bred tandsmil ger sämre läpprörelser)", type="filepath")
                 t_text = gr.Textbox(label="Vad ska personen säga?", lines=5)
                 t_audio = gr.Audio(label="…eller ladda upp en egen ljudfil (då används den i stället)", type="filepath")
                 with gr.Row():
@@ -167,6 +167,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 with gr.Row():
                     t_enh = gr.Checkbox(True, label="Skärp ansiktet (GFPGAN)")
                     t_fast = gr.Checkbox(False, label="Snabbläge (lägre upplösning, ca 3× snabbare)")
+                t_expr = gr.Slider(1.0, 2.5, value=1.5, step=0.1, label="Munrörelser (högre = tydligare läpprörelser)")
                 t_btn = gr.Button("Skapa pratklipp", variant="primary")
                 gr.Markdown("⏱ Räkna med ca 1 minut per sekund tal (snabbläge: ca 20 sek per sekund).")
             with gr.Column():
@@ -223,7 +224,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     i_to_scene.click(lambda p: p, i_sel, s_img)
     i_to_talk.click(lambda p: p, i_sel, t_img)
     s_btn.click(do_scene, [s_img, s_prompt, s_aspect, s_secs, s_steps, s_seed], [s_out, s_info])
-    t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast], t_out)
+    t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast, t_expr], t_out)
     v_btn.click(do_voice, [v_text, v_engine, v_ref, v_style, v_speed, v_emo], v_out)
     m_btn.click(do_music, [m_secs, m_mood, m_nat], m_out)
     s_add.click(add_film, [s_out, film], [film, f_files])

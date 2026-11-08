@@ -18,7 +18,7 @@ if enhance:
 size = 256 if a.get("fast") else 512
 res_dir = str(TMP / f"talk_out_{int(time.time())}")
 cmd = [sys.executable, "inference.py", "--driven_audio", wav, "--source_image", a["image"], "--result_dir", res_dir,
-       "--size", str(size), "--preprocess", "full", "--still", "--expression_scale", str(a.get("expression", 1.1))]
+       "--size", str(size), "--preprocess", "full", "--still", "--expression_scale", str(a.get("expression", 1.5))]
 if enhance:
     cmd += ["--enhancer", "gfpgan"]
 
@@ -61,7 +61,7 @@ if not result or not os.path.exists(result):
 if not result:
     print("\n".join(tail)); sys.exit(1)
 path = new_path("prat", "mp4")
-subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-i", result, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-i", result, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-vf", "scale='min(1080,iw)':-2",
                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", path], check=True)
 wr(path)
 wp(1.0, "Klar")
