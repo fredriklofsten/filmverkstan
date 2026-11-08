@@ -86,22 +86,11 @@ for n_part, nf in enumerate(parts):
     gc.collect(); torch.cuda.empty_cache()
 
 from diffusers.utils import export_to_video
+from common import finish_scene
 raw = new_path("scen_ra", "mp4")
 export_to_video(frames_out, raw, fps=24)
-path = raw
-if a.get("smooth", True):
-    # mjukare rörelse (60 bilder/s, rörelsekompenserad) + 1,5× större och lite skarpare
-    wp(0.96, "Mjukar upp rörelsen och skärper bilden")
-    import subprocess
-    from common import ffmpeg
-    path = new_path("scen", "mp4")
-    vf = ("minterpolate=fps=60:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,"
-          "scale=trunc(iw*1.5/2)*2:trunc(ih*1.5/2)*2:flags=lanczos,unsharp=5:5:0.5")
-    r = subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-i", raw, "-vf", vf, "-c:v", "libx264",
-                        "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", path])
-    if r.returncode == 0:
-        os.remove(raw)
-    else:
-        path = raw
+del pipe
+gc.collect(); torch.cuda.empty_cache()   # frigör grafikkortet innan ljudeffekterna
+path = finish_scene(raw, a.get("smooth", True), a.get("sfx"), wp)
 wr(path)
 wp(1.0, "Klar")

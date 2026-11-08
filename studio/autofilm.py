@@ -54,7 +54,7 @@ def scene_seconds(line):
 
 
 def make_film(rows, person, face, aspect, engine, ref, lipsync, mood, nature, subtitles, music_on,
-              progress=None):
+              progress=None, wan=False, sfx=True):
     rows = clean_rows(rows)
     n = len(rows)
     img_aspect = aspect if aspect in ("9:16", "16:9", "1:1") else "9:16"
@@ -88,8 +88,11 @@ def make_film(rows, person, face, aspect, engine, ref, lipsync, mood, nature, su
             media.append(clip); lines.append("")      # klippet har redan ljud
         else:
             move = to_english(rorelse) if rorelse else "subtle natural movement, gentle camera push-in"
-            clip = run_worker("video.py", {"image": img, "prompt": move, "aspect": img_aspect,
-                                           "seconds": scene_seconds(replik), "steps": 40, "smooth": True},
+            args = {"image": img, "prompt": move, "aspect": img_aspect, "seconds": scene_seconds(replik),
+                    "steps": 30 if wan else 40, "smooth": True}
+            if sfx:
+                args["sfx"] = move
+            clip = run_worker("wan.py" if wan else "video.py", args,
                               Part(progress, lo + span * 0.15, lo + span, label + " – rörlig scen"))[-1]
             media.append(clip); lines.append(replik)
 

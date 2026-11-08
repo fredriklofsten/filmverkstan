@@ -120,3 +120,28 @@ def wr(path):
 
 def wargs():
     return json.loads(sys.argv[1])
+
+
+# ---------- efterbehandling av rörliga scener (LTX och Wan) ----------
+def finish_scene(raw, smooth=True, sfx_prompt=None, progress=None):
+    """Mjukare rörelser (60 bilder/s) + skärpa, och ev. ljudeffekter. Returnerar slutlig sökväg."""
+    say = (lambda t: progress(0.97, t)) if progress else print
+    path = raw
+    if smooth:
+        say("Mjukar upp rörelsen och skärper bilden")
+        out = new_path("scen", "mp4")
+        vf = ("minterpolate=fps=60:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,"
+              "scale=trunc(iw*1.5/2)*2:trunc(ih*1.5/2)*2:flags=lanczos,unsharp=5:5:0.5")
+        r = subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-i", raw, "-vf", vf, "-an", "-c:v", "libx264",
+                            "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", out])
+        if r.returncode == 0:
+            os.remove(raw)
+            path = out
+    if sfx_prompt is not None:
+        import sfx
+        out = new_path("scen_ljud", "mp4")
+        res = sfx.add(path, sfx_prompt, out, say)
+        if res == out:
+            os.remove(path)
+            path = out
+    return path

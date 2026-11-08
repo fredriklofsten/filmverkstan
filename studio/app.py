@@ -14,7 +14,7 @@ import voice  # noqa: E402
 from common import OUT, DRIVE_MOUNTED, KAGGLE, run_worker, WorkerError  # noqa: E402
 from translate import to_english  # noqa: E402
 
-VERSION = "2.1"
+VERSION = "2.2"
 
 
 def gpu_text():
@@ -56,15 +56,27 @@ def pick_image(evt: gr.SelectData, paths):
     return paths[evt.index] if paths and evt.index < len(paths) else None
 
 
-def do_scene(image, prompt, aspect, seconds, steps, seed, smooth=True, progress=gr.Progress()):
+VIDEO_MODELS = ["LTX (snabb)", "Wan 2.2 (snyggare, ca 3× långsammare)"]
+
+
+def scene_args(image, en, aspect, seconds, steps, seed, smooth, sfx, model):
+    wan = model.startswith("Wan")
+    args = {"image": image, "prompt": en, "aspect": aspect, "seconds": seconds,
+            "steps": int(steps) if not wan else min(int(steps), 30), "seed": int(seed), "smooth": bool(smooth)}
+    if sfx:
+        args["sfx"] = en
+    return ("wan.py" if wan else "video.py"), args
+
+
+def do_scene(image, prompt, aspect, seconds, steps, seed, smooth=True, sfx=True, model=VIDEO_MODELS[0],
+             progress=gr.Progress()):
     if not image:
         raise gr.Error("Välj en startbild.")
     if not prompt.strip():
         raise gr.Error("Beskriv vad som ska hända.")
     en = to_english(prompt)
     try:
-        r = run_worker("video.py", {"image": image, "prompt": en, "aspect": aspect, "seconds": seconds,
-                                    "steps": int(steps), "seed": int(seed), "smooth": bool(smooth)}, progress)
+        r = run_worker(*scene_args(image, en, aspect, seconds, steps, seed, smooth, sfx, model), progress)
     except Exception as e:
         err(e)
     return r[-1], f"Engelsk beskrivning: {en}"
@@ -103,11 +115,13 @@ def do_script(idea, person, scenes, talk, progress=gr.Progress()):
         err(e)
 
 
-def do_autofilm(rows, person, face, aspect, engine, ref, lips, mood, nature, subs, music_on, progress=gr.Progress()):
+def do_autofilm(rows, person, face, aspect, engine, ref, lips, mood, nature, subs, music_on, model=VIDEO_MODELS[0],
+                sfx=True, progress=gr.Progress()):
     if hasattr(rows, "values"):  # pandas-tabell från gr.Dataframe
         rows = rows.values.tolist()
     try:
-        return autofilm.make_film(rows, person, face, aspect, engine, ref, lips, mood, nature, subs, music_on, progress)
+        return autofilm.make_film(rows, person, face, aspect, engine, ref, lips, mood, nature, subs, music_on, progress,
+                                  wan=model.startswith("Wan"), sfx=sfx)
     except Exception as e:
         err(e)
 
@@ -171,9 +185,12 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                     a_ref = gr.Audio(label="Röst att härma (valfritt)", type="filepath")
                     with gr.Column():
                         a_lips = gr.Checkbox(True, label="Bättre läppsynk (LatentSync)")
-                        a_subs = gr.Checkbox(True, label="Visa text")
+                        a_subs = gr.Checkbox(True, label="Text i takt med talet")
                         a_music = gr.Checkbox(True, label="Musik")
                         a_nat = gr.Checkbox(True, label="Naturljud")
+                with gr.Row():
+                    a_model = gr.Radio(VIDEO_MODELS, value=VIDEO_MODELS[0], label="Videomodell")
+                    a_sfx = gr.Checkbox(True, label="Ljudeffekter (MMAudio)")
                 a_mood = gr.Dropdown(list(music.MOODS), value=list(music.MOODS)[0], label="Musik")
                 a_go = gr.Button("2. Gör filmen", variant="primary")
                 a_out = gr.Video(label="Färdig film")
@@ -210,7 +227,10 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 with gr.Row():
                     s_aspect = gr.Radio(["9:16", "16:9", "1:1"], value="9:16", label="Format")
                     s_secs = gr.Slider(2, 10, value=3, step=1, label="Sekunder (över 3 s byggs scenen i delar)")
-                s_smooth = gr.Checkbox(True, label="Mjukare rörelser (60 bilder/s) och skarpare bild")
+                s_model = gr.Radio(VIDEO_MODELS, value=VIDEO_MODELS[0], label="Videomodell")
+                with gr.Row():
+                    s_smooth = gr.Checkbox(True, label="Mjukare rörelser (60 bilder/s) och skarpare bild")
+                    s_sfx = gr.Checkbox(True, label="Ljudeffekter som passar bilden (MMAudio)")
                 with gr.Accordion("Avancerat", open=False):
                     s_steps = gr.Slider(20, 50, value=40, step=5, label="Kvalitet (steg)")
                     s_seed = gr.Number(-1, label="Seed", precision=0)
@@ -271,7 +291,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 f_lines = gr.Textbox(label="Repliker – en rad per scen", lines=6)
                 with gr.Row():
                     f_aspect = gr.Radio(list(montage.FORMATS), value="9:16", label="Format")
-                    f_subs = gr.Checkbox(True, label="Visa text")
+                    f_subs = gr.Checkbox(True, label="Text i takt med talet")
                     f_music = gr.Checkbox(True, label="Musik")
                 with gr.Row():
                     f_engine = gr.Radio(voice.ENGINES, value=voice.ENGINES[0], label="Röst")
@@ -292,8 +312,9 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     i_to_face.click(lambda p: (p, p), i_sel, [i_face, a_face])
     a_write.click(do_script, [a_idea, a_person, a_n, a_talk], a_rows)
     a_go.click(do_autofilm, [a_rows, a_person, a_face, a_aspect, a_engine, a_ref, a_lips, a_mood, a_nat, a_subs,
-                             a_music], a_out)
-    s_btn.click(do_scene, [s_img, s_prompt, s_aspect, s_secs, s_steps, s_seed, s_smooth], [s_out, s_info])
+                             a_music, a_model, a_sfx], a_out)
+    s_btn.click(do_scene, [s_img, s_prompt, s_aspect, s_secs, s_steps, s_seed, s_smooth, s_sfx, s_model],
+                [s_out, s_info])
     t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast, t_expr, t_lips], t_out)
     v_btn.click(do_voice, [v_text, v_engine, v_ref, v_style, v_speed, v_emo], v_out)
     m_btn.click(do_music, [m_secs, m_mood, m_nat], m_out)

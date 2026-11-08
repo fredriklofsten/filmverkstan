@@ -34,3 +34,10 @@ Modellerna har egna licenser (LTX-Video: Lightricks open weights-licens, RealVis
 - **👤 Samma person i alla bilder:** välj ett ansikte (IP-Adapter Plus Face) så återkommer samma person i varje bild.
 - **Bättre läppsynk:** SadTalker ger huvudrörelser, LatentSync 1.5 ritar om munnen efter ljudet. Misslyckas den används SadTalker-klippet.
 - **Längre och mjukare scener:** upp till 10 sekunder (byggs i delar), 60 bilder/s och 1,5× skarpare bild.
+
+## Nytt i v2.2
+- **Wan 2.2 (5B)** som extra videomodell: snyggare rörelser, ca 3× långsammare än LTX. Välj under *Videomodell*.
+- **Ljudeffekter med MMAudio:** fåglar, steg, vind och vatten som följer det som händer i bilden. Ligger kvar under rösten och trycks ner när någon pratar.
+- **Undertexter i takt med talet (Whisper):** korta textrader som visas exakt när orden sägs – även i pratklippen.
+- Rättat: musiken tystnade när sista repliken var slut.
+
