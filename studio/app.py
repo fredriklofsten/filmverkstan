@@ -7,13 +7,14 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gradio as gr  # noqa: E402
 
+import autofilm  # noqa: E402
 import montage  # noqa: E402
 import music  # noqa: E402
 import voice  # noqa: E402
 from common import OUT, DRIVE_MOUNTED, KAGGLE, run_worker, WorkerError  # noqa: E402
 from translate import to_english  # noqa: E402
 
-VERSION = "2.0"
+VERSION = "2.1"
 
 
 def gpu_text():
@@ -37,12 +38,15 @@ def err(e):
 
 
 # ---------------- funktioner ----------------
-def do_images(prompt, aspect, count, seed, progress=gr.Progress()):
+def do_images(prompt, aspect, count, seed, face=None, likeness=0.6, progress=gr.Progress()):
     if not prompt.strip():
         raise gr.Error("Beskriv bilden först.")
     en = to_english(prompt)
+    args = {"prompt": en, "aspect": aspect, "count": int(count), "seed": int(seed)}
+    if face:
+        args.update(face=face, likeness=float(likeness))
     try:
-        paths = run_worker("image.py", {"prompt": en, "aspect": aspect, "count": int(count), "seed": int(seed)}, progress)
+        paths = run_worker("image.py", args, progress)
     except Exception as e:
         err(e)
     return paths, paths[0] if paths else None, f"Engelsk beskrivning: {en}"
@@ -52,7 +56,7 @@ def pick_image(evt: gr.SelectData, paths):
     return paths[evt.index] if paths and evt.index < len(paths) else None
 
 
-def do_scene(image, prompt, aspect, seconds, steps, seed, progress=gr.Progress()):
+def do_scene(image, prompt, aspect, seconds, steps, seed, smooth=True, progress=gr.Progress()):
     if not image:
         raise gr.Error("Välj en startbild.")
     if not prompt.strip():
@@ -60,7 +64,7 @@ def do_scene(image, prompt, aspect, seconds, steps, seed, progress=gr.Progress()
     en = to_english(prompt)
     try:
         r = run_worker("video.py", {"image": image, "prompt": en, "aspect": aspect, "seconds": seconds,
-                                    "steps": int(steps), "seed": int(seed)}, progress)
+                                    "steps": int(steps), "seed": int(seed), "smooth": bool(smooth)}, progress)
     except Exception as e:
         err(e)
     return r[-1], f"Engelsk beskrivning: {en}"
@@ -75,7 +79,7 @@ def do_voice(text, engine, ref, style, speed, emotion, progress=gr.Progress()):
         err(e)
 
 
-def do_talk(image, text, audio, engine, ref, enhance, fast, expr=1.5, progress=gr.Progress()):
+def do_talk(image, text, audio, engine, ref, enhance, fast, expr=1.5, better_lips=True, progress=gr.Progress()):
     if not image:
         raise gr.Error("Välj ett porträtt där ansiktet syns tydligt.")
     try:
@@ -83,12 +87,29 @@ def do_talk(image, text, audio, engine, ref, enhance, fast, expr=1.5, progress=g
             if not (text or "").strip():
                 raise gr.Error("Skriv vad personen ska säga, eller ladda upp en ljudfil.")
             audio = voice.speak(text, engine, ref, progress=progress)
-        r = run_worker("talk.py", {"image": image, "audio": audio, "enhance": enhance, "fast": fast, "expression": expr}, progress)
+        r = run_worker("talk.py", {"image": image, "audio": audio, "enhance": enhance, "fast": fast, "expression": expr,
+                                   "lipsync": "latentsync" if better_lips else ""}, progress)
     except gr.Error:
         raise
     except Exception as e:
         err(e)
     return r[-1]
+
+
+def do_script(idea, person, scenes, talk, progress=gr.Progress()):
+    try:
+        return autofilm.write_script(idea, person, scenes, talk, progress)
+    except Exception as e:
+        err(e)
+
+
+def do_autofilm(rows, person, face, aspect, engine, ref, lips, mood, nature, subs, music_on, progress=gr.Progress()):
+    if hasattr(rows, "values"):  # pandas-tabell från gr.Dataframe
+        rows = rows.values.tolist()
+    try:
+        return autofilm.make_film(rows, person, face, aspect, engine, ref, lips, mood, nature, subs, music_on, progress)
+    except Exception as e:
+        err(e)
 
 
 def do_music(secs, mood, nature):
@@ -123,6 +144,40 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                    " (Kaggle: syns under Output – spara versionen eller ladda ner)" if KAGGLE else
                    " (försvinner när Colab stängs – ladda ner det du vill spara)"))
 
+    with gr.Tab("⚡ Snabbfilm"):
+        gr.Markdown("**Från idé till färdig film.** 1) Skriv idén och tryck *Skriv manus*. "
+                    "2) Ändra fritt i tabellen. 3) Tryck *Gör filmen* – sedan sköter studion resten. "
+                    "Räkna med ca 5–10 minuter per scen.")
+        with gr.Row():
+            with gr.Column():
+                a_idea = gr.Textbox(label="Idé", lines=3, placeholder="En äldre man som bor i skogen berättar varför "
+                                    "han lämnade stan och hur naturen gjorde honom friskare")
+                a_person = gr.Textbox(label="Huvudperson (utseende)", placeholder="äldre man, 70 år, långt vitt skägg, "
+                                      "rutig flanellskjorta")
+                a_face = gr.Image(label="Huvudpersonens ansikte (valfritt – annars skapas ett)", type="filepath",
+                                  height=220)
+                with gr.Row():
+                    a_n = gr.Slider(2, 8, value=4, step=1, label="Antal scener")
+                    a_talk = gr.Radio(["Blandat", "Mest prat", "Mest berättarröst"], value="Blandat", label="Stil")
+                a_write = gr.Button("1. Skriv manus", variant="secondary")
+            with gr.Column():
+                a_rows = gr.Dataframe(headers=["Typ (prat/scen)", "Bild", "Rörelse", "Replik"],
+                                      datatype=["str", "str", "str", "str"], col_count=(4, "fixed"),
+                                      row_count=(4, "dynamic"), interactive=True, wrap=True, label="Manus")
+                with gr.Row():
+                    a_aspect = gr.Radio(["9:16", "16:9", "1:1"], value="9:16", label="Format")
+                    a_engine = gr.Radio(voice.ENGINES, value=voice.ENGINES[0], label="Röst")
+                with gr.Row():
+                    a_ref = gr.Audio(label="Röst att härma (valfritt)", type="filepath")
+                    with gr.Column():
+                        a_lips = gr.Checkbox(True, label="Bättre läppsynk (LatentSync)")
+                        a_subs = gr.Checkbox(True, label="Visa text")
+                        a_music = gr.Checkbox(True, label="Musik")
+                        a_nat = gr.Checkbox(True, label="Naturljud")
+                a_mood = gr.Dropdown(list(music.MOODS), value=list(music.MOODS)[0], label="Musik")
+                a_go = gr.Button("2. Gör filmen", variant="primary")
+                a_out = gr.Video(label="Färdig film")
+
     with gr.Tab("1. Bild"):
         with gr.Row():
             with gr.Column():
@@ -132,6 +187,10 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                     i_aspect = gr.Radio(["9:16", "16:9", "1:1", "4:5"], value="9:16", label="Format")
                     i_count = gr.Slider(1, 4, value=2, step=1, label="Antal bilder")
                 i_seed = gr.Number(-1, label="Seed (-1 = slumpa)", precision=0)
+                with gr.Accordion("👤 Samma person i alla bilder", open=False):
+                    i_face = gr.Image(label="Huvudpersonens ansikte (tydligt, framifrån)", type="filepath", height=200)
+                    i_like = gr.Slider(0.3, 0.9, value=0.6, step=0.05,
+                                       label="Likhet (högre = mer lik, lägre = friare bild)")
                 i_btn = gr.Button("Skapa bilder", variant="primary")
                 i_info = gr.Markdown()
             with gr.Column():
@@ -140,6 +199,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 with gr.Row():
                     i_to_scene = gr.Button("➡ Använd i rörlig scen")
                     i_to_talk = gr.Button("➡ Använd i pratklipp")
+                i_to_face = gr.Button("👤 Gör vald bild till huvudperson")
 
     with gr.Tab("2. Rörlig scen"):
         with gr.Row():
@@ -149,7 +209,8 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 gr.Markdown(TIP)
                 with gr.Row():
                     s_aspect = gr.Radio(["9:16", "16:9", "1:1"], value="9:16", label="Format")
-                    s_secs = gr.Slider(2, 6, value=3, step=1, label="Sekunder (3 ger skarpast)")
+                    s_secs = gr.Slider(2, 10, value=3, step=1, label="Sekunder (över 3 s byggs scenen i delar)")
+                s_smooth = gr.Checkbox(True, label="Mjukare rörelser (60 bilder/s) och skarpare bild")
                 with gr.Accordion("Avancerat", open=False):
                     s_steps = gr.Slider(20, 50, value=40, step=5, label="Kvalitet (steg)")
                     s_seed = gr.Number(-1, label="Seed", precision=0)
@@ -171,6 +232,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 with gr.Row():
                     t_enh = gr.Checkbox(True, label="Skärp ansiktet (GFPGAN)")
                     t_fast = gr.Checkbox(False, label="Snabbläge (lägre upplösning, ca 3× snabbare)")
+                t_lips = gr.Checkbox(True, label="Bättre läppsynk (LatentSync) – tydligare mun, tar ca dubbelt så lång tid")
                 t_expr = gr.Slider(1.0, 2.5, value=1.5, step=0.1, label="Munrörelser (högre = tydligare läpprörelser)")
                 t_btn = gr.Button("Skapa pratklipp", variant="primary")
                 gr.Markdown("⏱ Räkna med ca 1 minut per sekund tal (snabbläge: ca 20 sek per sekund).")
@@ -222,13 +284,17 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
             f_out = gr.Video(label="Färdig film")
 
     # kopplingar
-    i_btn.click(do_images, [i_prompt, i_aspect, i_count, i_seed], [gallery_paths, i_sel, i_info]).then(
+    i_btn.click(do_images, [i_prompt, i_aspect, i_count, i_seed, i_face, i_like], [gallery_paths, i_sel, i_info]).then(
         lambda p: p, gallery_paths, i_gal)
     i_gal.select(pick_image, gallery_paths, i_sel)
     i_to_scene.click(lambda p: p, i_sel, s_img)
     i_to_talk.click(lambda p: p, i_sel, t_img)
-    s_btn.click(do_scene, [s_img, s_prompt, s_aspect, s_secs, s_steps, s_seed], [s_out, s_info])
-    t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast, t_expr], t_out)
+    i_to_face.click(lambda p: (p, p), i_sel, [i_face, a_face])
+    a_write.click(do_script, [a_idea, a_person, a_n, a_talk], a_rows)
+    a_go.click(do_autofilm, [a_rows, a_person, a_face, a_aspect, a_engine, a_ref, a_lips, a_mood, a_nat, a_subs,
+                             a_music], a_out)
+    s_btn.click(do_scene, [s_img, s_prompt, s_aspect, s_secs, s_steps, s_seed, s_smooth], [s_out, s_info])
+    t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast, t_expr, t_lips], t_out)
     v_btn.click(do_voice, [v_text, v_engine, v_ref, v_style, v_speed, v_emo], v_out)
     m_btn.click(do_music, [m_secs, m_mood, m_nat], m_out)
     s_add.click(add_film, [s_out, film], [film, f_files])

@@ -28,3 +28,9 @@ Modellerna har egna licenser (LTX-Video: Lightricks open weights-licens, RealVis
 1. Skapa ett gratis konto på kaggle.com och verifiera telefonnumret (Settings → Phone verification).
 2. **Create → New Notebook → File → Import Notebook → GitHub** och klistra in `fredriklofsten/filmverkstan`, välj `Filmverkstan_Kaggle.ipynb`.
 3. **Session options:** Accelerator **GPU T4 x2**, Internet **On**. Tryck ▶.
+
+## Nytt i v2.1
+- **⚡ Snabbfilm:** skriv en idé → studion skriver manus (Qwen3 4B), som du kan ändra, och gör sedan bilder, rörliga scener, pratklipp, röst, musik och färdig film automatiskt.
+- **👤 Samma person i alla bilder:** välj ett ansikte (IP-Adapter Plus Face) så återkommer samma person i varje bild.
+- **Bättre läppsynk:** SadTalker ger huvudrörelser, LatentSync 1.5 ritar om munnen efter ljudet. Misslyckas den används SadTalker-klippet.
+- **Längre och mjukare scener:** upp till 10 sekunder (byggs i delar), 60 bilder/s och 1,5× skarpare bild.

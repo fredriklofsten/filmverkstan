@@ -1,4 +1,5 @@
-"""Text → bild med RealVisXL Lightning (fotorealistisk, snabb)."""
+"""Text → bild med RealVisXL Lightning (fotorealistisk, snabb).
+Med "face" används IP-Adapter Plus Face så att samma person återkommer i alla bilder."""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import wargs, wp, wr, new_path  # noqa
@@ -22,6 +23,39 @@ try:
 except Exception:
     pass
 
+
+def face_crop(img):
+    """Skär ut ansiktet (med lite marginal) så att ansiktsmodellen ser det tydligt."""
+    import numpy as np
+    img = img.convert("RGB")
+    try:
+        from facexlib.detection import init_detection_model
+        det = init_detection_model("retinaface_resnet50", half=False, device="cuda")
+        with torch.no_grad():
+            boxes = det.detect_faces(np.array(img)[:, :, ::-1], 0.6)
+        del det
+        if len(boxes):
+            x1, y1, x2, y2 = max(boxes, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))[:4]
+            cx, cy, r = (x1 + x2) / 2, (y1 + y2) / 2, max(x2 - x1, y2 - y1) * 0.8
+            return img.crop((int(max(0, cx - r)), int(max(0, cy - r)),
+                             int(min(img.width, cx + r)), int(min(img.height, cy + r))))
+    except Exception as e:
+        print("ansiktsdetektering misslyckades, använder övre mitten:", e, flush=True)
+    side = min(img.width, img.height)
+    left = (img.width - side) // 2
+    return img.crop((left, 0, left + side, side))
+
+
+face = None
+if a.get("face"):
+    wp(0.05, "Lär in huvudpersonens ansikte")
+    from PIL import Image
+    face = face_crop(Image.open(a["face"]))
+    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="sdxl_models",
+                         weight_name="ip-adapter-plus-face_sdxl_vit-h.safetensors",
+                         image_encoder_folder="models/image_encoder")
+    pipe.set_ip_adapter_scale(float(a.get("likeness", 0.6)))
+
 neg = ("cartoon, painting, illustration, 3d render, deformed, distorted face, bad hands, extra fingers, "
        "blurry, low quality, text, watermark, logo")
 prompt = a["prompt"].strip()
@@ -35,8 +69,10 @@ for i in range(count):
     def cb(p, step, t, k, i=i):
         wp((i + (step + 1) / steps) / count * 0.98, f"Bild {i + 1} av {count}")
         return k
+    extra = {"ip_adapter_image": face} if face is not None else {}
     img = pipe(prompt=prompt, negative_prompt=neg, width=w, height=h, num_inference_steps=steps,
-               guidance_scale=float(a.get("guidance", 1.5)), generator=g, callback_on_step_end=cb).images[0]
+               guidance_scale=float(a.get("guidance", 1.5)), generator=g, callback_on_step_end=cb,
+               **extra).images[0]
     path = new_path("bild", "png")
     img.save(path)
     wr(path)

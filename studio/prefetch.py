@@ -17,6 +17,8 @@ MODELS = [
     ("översättning", "Helsinki-NLP/opus-mt-sv-en", ["*.json", "*.spm", "*.txt", "*.safetensors", "pytorch_model.bin"], 1),
     ("bildmodell", "madebyollin/sdxl-vae-fp16-fix", ["*.json", "diffusion_pytorch_model.safetensors"], 1),
     ("bildmodell", "SG161222/RealVisXL_V5.0_Lightning", ["*.json", "*.txt", "*.fp16.safetensors"], 8),
+    ("ansiktsmodell", "h94/IP-Adapter", ["sdxl_models/ip-adapter-plus-face_sdxl_vit-h.safetensors",
+                                         "models/image_encoder/config.json", "models/image_encoder/model.safetensors"], 4),
     ("textmodell för video", "google-t5/t5-base", ["*.json", "spiece.model"], 1),
     ("textmodell för video", "city96/t5-v1_1-xxl-encoder-bf16", ["*.json", "*.safetensors"], 12),
     ("videomodell", "Lightricks/LTX-Video-0.9.5",
