@@ -6,6 +6,21 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+
+
+def fetch(url, dest, tries=5):
+    """Laddar ner med nya försök – GitHub svarar ibland tillfälligt med fel (t.ex. 504)."""
+    import time
+    for n in range(tries):
+        try:
+            urllib.request.urlretrieve(url, dest)
+            return
+        except Exception as e:
+            if n == tries - 1:
+                raise
+            print(f"    nedladdningen misslyckades ({e}) – försöker igen om {5 * (n + 1)} s", flush=True)
+            time.sleep(5 * (n + 1))
+
 import json
 
 
@@ -45,7 +60,7 @@ for rel, url in files.items():
     os.makedirs(os.path.dirname(p), exist_ok=True)
     if not os.path.exists(p):
         print("  hämtar", rel, flush=True)
-        urllib.request.urlretrieve(url, p + ".part")
+        fetch(url, p + ".part")
         os.rename(p + ".part", p)
 
 
@@ -82,7 +97,7 @@ except Exception:
     try:
         meta = json.load(urllib.request.urlopen("https://pypi.org/pypi/basicsr/1.4.2/json"))
         url = [u["url"] for u in meta["urls"] if u["packagetype"] == "sdist"][0]
-        urllib.request.urlretrieve(url, "/tmp/basicsr.tar.gz")
+        fetch(url, "/tmp/basicsr.tar.gz")
         import shutil
         shutil.rmtree("/tmp/bsr", ignore_errors=True)
         tarfile.open("/tmp/basicsr.tar.gz").extractall("/tmp/bsr")
@@ -107,6 +122,6 @@ base = "https://huggingface.co/rhasspy/piper-voices/resolve/main/sv/sv_SE/nst/me
 for ext in ("", ".json"):
     f = "/content/fv_models/sv_SE-nst-medium.onnx" + ext
     if not os.path.exists(f):
-        urllib.request.urlretrieve(base + ext, f)
+        fetch(base + ext, f)
 
 print("5/5 Klart! ✅", flush=True)
