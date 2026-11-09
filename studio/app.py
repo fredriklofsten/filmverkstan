@@ -1,6 +1,8 @@
 """Filmverkstan Studio – gränssnittet. Startas från Colab- eller Kaggle-notebooken."""
+import json
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -15,7 +17,7 @@ import voice  # noqa: E402
 from common import OUT, DRIVE_MOUNTED, KAGGLE, run_worker, WorkerError  # noqa: E402
 from translate import to_english  # noqa: E402
 
-VERSION = "2.5"
+VERSION = "2.6"
 
 
 def gpu_text():
@@ -151,63 +153,185 @@ def _lang(name):
     return music.LANGUAGES.get(name, "sv")
 
 
-def _song_md(wavs, info, write):
-    seeds = info.get("seeds") or [info.get("seed")]
-    md = (f"✅ Klar: {len(wavs)} version{'er' if len(wavs) > 1 else ''} · 🎲 Frö: **{seeds[0]}** "
-          f"(samma frö + samma text = samma låt)  \n🎼 Stil: *{(info.get('caption') or '')[:300]}*")
+MAX_VERSIONS = 4
+
+
+def _song_md(vers, info, write, quality, mastering, preview=False):
+    seeds = ", ".join(f"v{i + 1}: **{v['seed']}**" for i, v in enumerate(vers))
+    md = (f"✅ {'Provlyssning' if preview else 'Klar'}: {len(vers)} version{'er' if len(vers) > 1 else ''} · "
+          f"{quality.split(' (')[0]}  \n🎲 Frö: {seeds} – tryck *🎲 Behåll fröet* för att göra om en favorit  \n"
+          f"🎼 Stil: *{(info.get('caption') or '')[:300]}*")
+    if mastering and vers and vers[0].get("lufs_before") is not None:
+        md += f"  \n🎚️ Mastrad: {vers[0]['lufs_before']:.1f} → {music.MASTER_LUFS} LUFS (jämför under *Före mastering*)"
     if write:
         md += "  \n✍️ AI:n skrev texten – den står i rutan *Låttext*. Ändra den gärna och tryck *Skapa låt* igen."
+    if preview:
+        md += "  \n👂 Låter orden rätt? Rätta under *Uttal* och provlyssna igen – eller tryck *Skapa låt*."
     return md
 
 
-def do_song(desc, lyrics, write, lang_name, secs, bpm, seed, variants, progress=gr.Progress()):
+def _finish_versions(wavs, info, mastering, meta):
+    """Mastring, MP3 och sparad info för varje version. Returnerar lista med dict per version."""
+    seeds = info.get("seeds") or [info.get("seed")]
+    vers = []
+    for i, w in enumerate(wavs):
+        v = {"raw": w, "seed": seeds[min(i, len(seeds) - 1)], "master": None, "lufs_before": None}
+        if mastering:
+            try:
+                v["lufs_before"] = music.loudness(w)
+                v["master"] = music.master(w)
+            except Exception as e:
+                print("Mastringen misslyckades – använder originalet:", e, flush=True)
+        v["final"] = v["master"] or w
+        v["mp3"] = music.to_mp3(v["final"])
+        music.save_meta(w, {**meta, "version": i + 1, "seed": v["seed"], "wav": w, "master": v["master"],
+                            "mp3": v["mp3"], "model": info.get("model"), "caption": info.get("caption"),
+                            "bpm": info.get("bpm") or meta.get("bpm"), "created": time.strftime("%Y-%m-%d %H:%M")})
+        vers.append(v)
+    return vers
+
+
+def _song_outputs(vers, md, lyrics_box, write_flag):
+    audio = [gr.update(value=vers[i]["mp3"], visible=True) if i < len(vers) else gr.update(value=None, visible=False)
+             for i in range(MAX_VERSIONS)]
+    rows = [gr.update(visible=i < len(vers)) for i in range(MAX_VERSIONS)]
+    files = [f for v in vers for f in (v["final"], v["mp3"]) + ((v["raw"],) if v["master"] else ())]
+    before = gr.update(value=vers[0]["raw"] if vers[0]["master"] else None, visible=bool(vers[0]["master"]))
+    return (*audio, *rows, md, lyrics_box, write_flag, vers, files, vers[0]["raw"], vers[0]["final"], before,
+            gr.update(choices=music.library()))
+
+
+def do_song(desc, lyrics, write, lang_name, secs, bpm, seed, variants, quality, mastering, pron, preview=False,
+            progress=gr.Progress()):
     desc = (desc or "").strip()
     lyrics = (lyrics or "").strip()
     lang = _lang(lang_name)
     if not desc and not lyrics:
         raise gr.Error("Beskriv låten eller skriv en låttext.")
     write = lang != "none" and (bool(write) or not lyrics)
+    n = int(str(variants)[0]) if str(variants)[:1].isdigit() else 1
+    q = music.QUALITIES.get(quality, "fast")
+    music.save_settings({"lang": lang_name, "quality": quality, "variants": variants, "mastering": bool(mastering),
+                         "pron": pron or ""})
+    sung = music.apply_pron(lyrics, pron) if lang != "none" else lyrics
+    seconds = float(secs)
+    if preview:
+        if write:
+            raise gr.Error("Skriv (eller låt AI:n skriva) texten först – provlyssningen sjunger början av din text.")
+        sung = music.preview_lyrics(sung) if lang != "none" else sung
+        seconds, n, write = 30.0, 1, False
     try:
-        wavs, info = music.song(to_english(desc) if desc else "", query=desc, lyrics=lyrics, write_lyrics=write,
-                                language=lang, seconds=float(secs), bpm=int(bpm or 0), seed=int(seed),
-                                variants=2 if str(variants).startswith("2") else 1, progress=progress)
-        mp3s = [music.to_mp3(w) for w in wavs]
+        wavs, info = music.song(to_english(desc) if desc else "", query=desc, lyrics=sung, write_lyrics=write,
+                                language=lang, seconds=seconds, bpm=int(bpm or 0), seed=int(seed),
+                                variants=n, quality=q, progress=progress)
+        out_lyrics = (info.get("lyrics") or lyrics) if write else lyrics
+        vers = _finish_versions(wavs, info, bool(mastering), {
+            "task": "song", "preview": preview, "query": desc, "lyrics": out_lyrics, "lyrics_sung": sung,
+            "pron": pron or "", "language": lang_name, "seconds": float(secs), "bpm": int(bpm or 0),
+            "quality": quality, "mastering": bool(mastering)})
     except Exception as e:
         err(e)
-    v2 = mp3s[1] if len(mp3s) > 1 else None
-    files = wavs + mp3s
-    return (mp3s[0], gr.update(value=v2, visible=bool(v2)), _song_md(wavs, info, write),
-            info.get("lyrics") or lyrics, False, files, files, wavs[0], wavs[0])
+    return _song_outputs(vers, _song_md(vers, info, write, quality, mastering, preview), out_lyrics, False)
+
+
+def do_song_preview(desc, lyrics, write, lang_name, secs, bpm, seed, variants, quality, mastering, pron,
+                    progress=gr.Progress()):
+    """Gör bara början (ca 30 sek, en version) för att höra om orden låter rätt."""
+    return do_song(desc, lyrics, write, lang_name, secs, bpm, seed, variants, quality, mastering, pron,
+                   preview=True, progress=progress)
 
 
 def pick_song(cur, which):
-    """Använd version 1 eller 2 i redigering och musikvideo."""
-    wavs = [f for f in (cur or []) if f.endswith(".wav")]
-    if not wavs:
+    """Använd en version i redigering (originalet) och musikvideo (den mastrade)."""
+    if not cur:
         raise gr.Error("Skapa en låt först.")
-    i = 1 if which == 2 and len(wavs) > 1 else 0
-    gr.Info(f"Version {i + 1} vald")
-    return wavs[i], wavs[i]
+    v = cur[min(which, len(cur)) - 1]
+    gr.Info(f"Version {min(which, len(cur))} vald")
+    return v["raw"], v["final"]
 
 
-def do_edit(src, mode, start, end, desc, lyrics, lang_name, strength, seed, progress=gr.Progress()):
+def keep_seed(cur, which):
+    if not cur or which > len(cur):
+        raise gr.Error("Skapa en låt först.")
+    gr.Info(f"Fröet {cur[which - 1]['seed']} är inskrivet – samma text och kvalitet ger samma låt igen.")
+    return cur[which - 1]["seed"], "1 version"
+
+
+def do_edit(src, mode, start, end, desc, lyrics, lang_name, strength, seed, mastering, pron, progress=gr.Progress()):
     if not src:
         raise gr.Error("Välj eller ladda upp en låt först.")
     cap = to_english(desc) if (desc or "").strip() else ""
+    sung = music.apply_pron(lyrics or "", pron)
     try:
         if mode.startswith("Gör om"):
             if float(end) <= float(start):
                 raise ValueError("Slutet måste komma efter början.")
-            wavs, info = music.repaint(src, start, end, cap or "same style as the rest of the song", lyrics or "",
+            wavs, info = music.repaint(src, start, end, cap or "same style as the rest of the song", sung,
                                        _lang(lang_name), int(seed), progress)
         else:
             if not cap:
                 raise ValueError("Beskriv den nya stilen, t.ex. 'akustisk version med piano och stråkar'.")
-            wavs, info = music.cover(src, cap, float(strength), lyrics or "", _lang(lang_name), int(seed), progress)
-        mp3 = music.to_mp3(wavs[0])
+            wavs, info = music.cover(src, cap, float(strength), sung, _lang(lang_name), int(seed), progress)
+        vers = _finish_versions(wavs[:1], info, bool(mastering), {
+            "task": info.get("task") or ("repaint" if mode.startswith("Gör om") else "cover"), "query": desc or "",
+            "lyrics": lyrics or "", "lyrics_sung": sung, "pron": pron or "", "language": lang_name,
+            "mastering": bool(mastering), "src": src})
     except Exception as e:
         err(e)
-    return mp3, f"✅ Klar · 🎲 Frö: **{info.get('seed')}**", [wavs[0], mp3], wavs[0]
+    v = vers[0]
+    files = [v["final"], v["mp3"]] + ([v["raw"]] if v["master"] else [])
+    return v["mp3"], f"✅ Klar · 🎲 Frö: **{info.get('seed')}**", files, v["final"], gr.update(choices=music.library())
+
+
+# ---------- Bibliotek ----------
+def lib_refresh():
+    return gr.update(choices=music.library(), value=None)
+
+
+def lib_show(js):
+    if not js:
+        return None, "", None
+    d = json.load(open(js))
+    final = d.get("master") or d["wav"]
+    md = (f"**{d.get('created', '')}** · version {d.get('version', 1)} · 🎲 frö **{d.get('seed')}** · "
+          f"{(d.get('quality') or '').split(' (')[0]} · {d.get('language', '')}"
+          f"{' · mastrad' if d.get('master') else ''}  \n"
+          f"🎼 *{(d.get('query') or d.get('caption') or '')[:300]}*")
+    if d.get("lyrics"):
+        md += "\n\n```\n" + d["lyrics"][:1500] + "\n```"
+    files = [f for f in (final, d.get("mp3"), d["wav"] if d.get("master") else None) if f and os.path.exists(f)]
+    return d.get("mp3") if d.get("mp3") and os.path.exists(d["mp3"]) else final, md, files
+
+
+def lib_load(js):
+    if not js:
+        raise gr.Error("Välj en låt i listan först.")
+    d = json.load(open(js))
+    gr.Info("Inställningarna är inladdade i fliken 🎤 Låt med sång")
+    q = d.get("quality") if d.get("quality") in music.QUALITIES else list(music.QUALITIES)[0]
+    lang = d.get("language") if d.get("language") in music.LANGUAGES else "Svenska"
+    return (d.get("query") or "", d.get("lyrics") or "", lang, d.get("seconds") or 0, d.get("bpm") or 0,
+            d.get("seed", -1), q, d.get("pron") or "", "1 version", False)
+
+
+def lib_use(js):
+    if not js:
+        raise gr.Error("Välj en låt i listan först.")
+    d = json.load(open(js))
+    gr.Info("Låten är vald i Redigera låt och Musikvideo")
+    return d["wav"], d.get("master") or d["wav"], d.get("lyrics") or "", d.get("lyrics") or ""
+
+
+def load_song_settings():
+    st = music.load_settings()
+    g = lambda k, ok, default: st.get(k) if st.get(k) in ok else default  # noqa: E731
+    return (g("lang", music.LANGUAGES, "Svenska"),
+            g("quality", music.QUALITIES, list(music.QUALITIES)[0]),
+            g("variants", VARIANT_CHOICES, VARIANT_CHOICES[1]),
+            bool(st.get("mastering", True)), st.get("pron", ""))
+
+
+VARIANT_CHOICES = ["1 version", "2 versioner", "3 versioner", "4 versioner"]
 
 
 def do_video(song, lyrics, desc, style, aspect, lang_name, subs, moving, face, progress=gr.Progress()):
@@ -370,8 +494,8 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
         cur_song = gr.State([])
         with gr.Tab("🎤 Låt med sång (ACE-Step)"):
             gr.Markdown("Hela låtar med **sång** – på svenska, engelska m.fl. – eller instrumentalt. "
-                        "Skriv egen text eller låt AI:n skriva den. Ca 1–3 min per låt "
-                        "(första gången installeras ACE-Step, ca 10–15 min – det startar redan när studion startar).")
+                        "Skriv egen text eller låt AI:n skriva den. "
+                        "(Första gången installeras ACE-Step, ca 10–15 min – det startar redan när studion startar.)")
             with gr.Row():
                 with gr.Column():
                     sg_desc = gr.Textbox(label="Beskriv låten (stil, instrument, stämning, röst)", lines=3,
@@ -381,27 +505,60 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                                            placeholder="[verse]\nSolen glittrar på sjön\nvi springer ner till bryggan\n\n"
                                                        "[chorus]\nHela sommaren är vår\n…")
                     sg_write = gr.Checkbox(False, label="Låt AI:n skriva en ny text (ersätter texten ovan)")
+                    with gr.Accordion("🗣️ Uttal – om AI:n sjunger ett ord fel", open=False):
+                        sg_pron = gr.Textbox(label="Ett ord per rad:  ord = så som det ska sjungas", lines=4,
+                                             placeholder="sjön = schön\nkärlek = schärlek\nhärifrån = här-i-från")
+                        gr.Markdown("<small>Orden byts bara i det som skickas till AI:n – din text i rutan och i "
+                                    "musikvideons undertexter är oförändrad. Dela gärna upp svåra ord med bindestreck. "
+                                    "Testa med <b>🎧 Provlyssna början</b>.</small>")
                     with gr.Row():
                         sg_lang = gr.Dropdown(list(music.LANGUAGES), value="Svenska", label="Språk")
                         sg_secs = gr.Slider(0, 240, value=0, step=5, label="Längd (sek, 0 = efter texten)")
-                    sg_var = gr.Radio(["1 version", "2 versioner (välj den bästa)"], value="2 versioner (välj den bästa)",
-                                      label="Antal versioner")
+                    sg_quality = gr.Radio(list(music.QUALITIES), value=list(music.QUALITIES)[0], label="Kvalitet")
+                    with gr.Row():
+                        sg_var = gr.Radio(VARIANT_CHOICES, value=VARIANT_CHOICES[1], label="Antal versioner (välj den bästa)")
+                        sg_master = gr.Checkbox(True, label="🎚️ Automatisk mastering (-14 LUFS, som Spotify/YouTube)")
                     with gr.Accordion("Mer", open=False):
                         sg_bpm = gr.Number(0, precision=0, label="Tempo i bpm (0 = AI:n väljer)")
                         sg_seed = gr.Number(-1, precision=0, label="Frö (-1 = slumpa)")
-                    sg_btn = gr.Button("🎤 Skapa låt", variant="primary")
-                with gr.Column():
-                    sg_out = gr.Audio(label="Version 1", type="filepath")
-                    sg_out2 = gr.Audio(label="Version 2", type="filepath", visible=False)
-                    sg_info = gr.Markdown()
+                        gr.Markdown("<small>Samma frö + samma text + samma kvalitet = samma låt. Jämför modellerna "
+                                    "genom att göra samma låt med samma frö i <i>Snabb</i> och <i>Normal</i>. "
+                                    "XL-modellerna laddas ner första gången de används (10–20 GB).</small>")
                     with gr.Row():
-                        sg_use1 = gr.Button("✔ Använd version 1", size="sm")
-                        sg_use2 = gr.Button("✔ Använd version 2", size="sm")
-                    gr.Markdown("<small>Vald version används i <b>Redigera låt</b> och <b>Musikvideo</b>.</small>")
+                        sg_prev = gr.Button("🎧 Provlyssna början (ca 30 sek)")
+                        sg_btn = gr.Button("🎤 Skapa låt", variant="primary")
+                with gr.Column():
+                    sg_outs, sg_rows, sg_uses, sg_keeps = [], [], [], []
+                    for _i in range(MAX_VERSIONS):
+                        sg_outs.append(gr.Audio(label=f"Version {_i + 1}", type="filepath", visible=_i == 0))
+                        with gr.Row(visible=_i == 0) as _r:
+                            sg_uses.append(gr.Button(f"✔ Använd version {_i + 1}", size="sm"))
+                            sg_keeps.append(gr.Button("🎲 Behåll fröet", size="sm"))
+                        sg_rows.append(_r)
+                    sg_info = gr.Markdown()
+                    with gr.Accordion("🎚️ Före mastering (version 1)", open=False):
+                        sg_before = gr.Audio(label="Utan mastering", type="filepath", visible=False)
+                    gr.Markdown("<small>Vald version används i <b>Redigera låt</b> och <b>Musikvideo</b>. "
+                                "Alla låtar sparas i <b>📚 Mina låtar</b>.</small>")
                     sg_files = gr.File(label="Ladda ner (WAV och MP3)", file_count="multiple")
                     gr.Markdown("<small>💡 Märk upp texten med <b>[verse]</b>, <b>[chorus]</b>, <b>[bridge]</b> för "
                                 "tydligare låtform. ACE-Step har MIT-licens – du får använda låtarna kommersiellt, "
                                 "men se till att texten är din egen.</small>")
+        with gr.Tab("📚 Mina låtar") as lib_tab:
+            gr.Markdown("Alla låtar du gjort, nyast först – med text, stil, inställningar och frö. "
+                        "Sparas i resultatmappen (i Google Drive om den är ansluten).")
+            with gr.Row():
+                with gr.Column():
+                    with gr.Row():
+                        lib_dd = gr.Dropdown([], label="Låt", scale=4)
+                        lib_ref = gr.Button("🔄 Uppdatera", size="sm", scale=1)
+                    lib_audio = gr.Audio(label="Lyssna", type="filepath")
+                    with gr.Row():
+                        lib_load_btn = gr.Button("↩️ Ladda in inställningarna (för att göra om den)")
+                        lib_use_btn = gr.Button("✔ Använd i Redigera och Musikvideo")
+                    lib_files = gr.File(label="Ladda ner", file_count="multiple")
+                with gr.Column():
+                    lib_info = gr.Markdown()
         with gr.Tab("✂️ Redigera låt"):
             gr.Markdown("Gör om **en del** av en låt (resten behålls), eller gör en **ny version i en annan stil**. "
                         "Använd en låt du gjort här, eller ladda upp en egen.")
@@ -420,6 +577,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                         ed_str = gr.Slider(0.1, 1.0, value=0.5, step=0.05,
                                            label="Ny stil: hur mycket av originalet som behålls")
                     ed_seed = gr.Number(-1, precision=0, label="Frö (-1 = slumpa)")
+                    gr.Markdown("<small>Mastering och uttal följer inställningarna i <b>🎤 Låt med sång</b>.</small>")
                     ed_btn = gr.Button("✂️ Ändra låten", variant="primary")
                 with gr.Column():
                     ed_out = gr.Audio(label="Resultat", type="filepath")
@@ -518,13 +676,24 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast, t_expr, t_lips], t_out)
     v_btn.click(do_voice, [v_text, v_engine, v_ref, v_style, v_speed, v_emo], v_out)
     m_btn.click(do_music_mp3, [m_secs, m_mood, m_nat], [m_out, m_files])
-    sg_btn.click(do_song, [sg_desc, sg_lyrics, sg_write, sg_lang, sg_secs, sg_bpm, sg_seed, sg_var],
-                 [sg_out, sg_out2, sg_info, sg_lyrics, sg_write, cur_song, sg_files, ed_src, mv_song]).then(
-        lambda l, lang: (l, l, lang, lang), [sg_lyrics, sg_lang], [ed_lyrics, mv_lyrics, ed_lang, mv_lang])
-    sg_use1.click(lambda c: pick_song(c, 1), cur_song, [ed_src, mv_song])
-    sg_use2.click(lambda c: pick_song(c, 2), cur_song, [ed_src, mv_song])
-    ed_btn.click(do_edit, [ed_src, ed_mode, ed_start, ed_end, ed_desc, ed_lyrics, ed_lang, ed_str, ed_seed],
-                 [ed_out, ed_info, ed_files, mv_song])
+    sg_in = [sg_desc, sg_lyrics, sg_write, sg_lang, sg_secs, sg_bpm, sg_seed, sg_var, sg_quality, sg_master, sg_pron]
+    sg_res = [*sg_outs, *sg_rows, sg_info, sg_lyrics, sg_write, cur_song, sg_files, ed_src, mv_song, sg_before, lib_dd]
+    _copy = dict(fn=lambda l, lang: (l, l, lang, lang), inputs=[sg_lyrics, sg_lang],
+                 outputs=[ed_lyrics, mv_lyrics, ed_lang, mv_lang])
+    sg_btn.click(do_song, sg_in, sg_res).then(**_copy)
+    sg_prev.click(do_song_preview, sg_in, sg_res)
+    for _i in range(MAX_VERSIONS):
+        sg_uses[_i].click(lambda c, _n=_i + 1: pick_song(c, _n), cur_song, [ed_src, mv_song])
+        sg_keeps[_i].click(lambda c, _n=_i + 1: keep_seed(c, _n), cur_song, [sg_seed, sg_var])
+    ed_btn.click(do_edit, [ed_src, ed_mode, ed_start, ed_end, ed_desc, ed_lyrics, ed_lang, ed_str, ed_seed,
+                           sg_master, sg_pron], [ed_out, ed_info, ed_files, mv_song, lib_dd])
+    lib_tab.select(lib_refresh, None, lib_dd)
+    lib_ref.click(lib_refresh, None, lib_dd)
+    lib_dd.change(lib_show, lib_dd, [lib_audio, lib_info, lib_files])
+    lib_load_btn.click(lib_load, lib_dd, [sg_desc, sg_lyrics, sg_lang, sg_secs, sg_bpm, sg_seed, sg_quality, sg_pron,
+                                          sg_var, sg_write])
+    lib_use_btn.click(lib_use, lib_dd, [ed_src, mv_song, ed_lyrics, mv_lyrics])
+    app.load(load_song_settings, None, [sg_lang, sg_quality, sg_var, sg_master, sg_pron])
     mv_btn.click(do_video, [mv_song, mv_lyrics, mv_desc, mv_style, mv_aspect, mv_lang, mv_subs, mv_move, mv_face],
                  mv_out)
     am_btn.click(do_music_ai, [am_desc, am_style, am_secs, am_size, am_seed, am_guid, am_nat],

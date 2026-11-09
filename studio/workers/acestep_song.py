@@ -10,10 +10,11 @@ Två sätt att köra:
             Varje jobb avslutas med '@@DONE' eller '@@ERR <text>'. Då slipper varje låt ladda om modellerna.
 
 Jobb (JSON): task (song|repaint|cover), caption, query, lyrics, write_lyrics, language (sv|en|…|none),
-             seconds (0 = auto), bpm (0 = auto), seed, variants (1–2), steps,
+             seconds (0 = auto), bpm (0 = auto), seed, variants (1–4), quality (fast|normal|high),
              src (ljudfil, för repaint/cover), start, end (sekunder, repaint), strength (0–1, cover)
 Resultat: '@@R <wav>' per version och '@@R <json>' med låttext och inställningar.
 """
+import gc as _gc
 import json
 import os
 import shutil
@@ -38,7 +39,8 @@ from acestep.gpu_config import get_gpu_config, set_global_gpu_config  # noqa: E4
 from acestep.handler import AceStepHandler  # noqa: E402
 from acestep.llm_inference import LLMHandler  # noqa: E402
 from acestep.inference import GenerationParams, GenerationConfig, generate_music, create_sample  # noqa: E402
-from acestep.model_downloader import ensure_main_model, get_checkpoints_dir, check_main_model_exists  # noqa: E402
+from acestep.model_downloader import (ensure_main_model, get_checkpoints_dir, check_main_model_exists,  # noqa: E402
+                                      check_model_exists)
 from acestep.constants import TASK_INSTRUCTIONS  # noqa: E402
 
 gc = get_gpu_config()
@@ -53,13 +55,47 @@ if not check_main_model_exists(ck):
 dev = "cuda" if torch.cuda.is_available() else "cpu"
 offload = dev == "cuda" and gc.gpu_memory_gb < 20
 
-wp(0.10, "Laddar musikmodellen")
-dit = AceStepHandler()
-msg, ok = dit.initialize_service(project_root=ACE, config_path="acestep-v15-turbo", device=dev,
-                                 use_flash_attention=False, compile_model=False,
-                                 offload_to_cpu=offload, offload_dit_to_cpu=False)
-if not ok:
-    raise RuntimeError(f"Musikmodellen startade inte: {msg}")
+# Kvalitetsnivåer: modell, antal steg, guidance (bara för icke-turbo) och shift
+QUALITY = {
+    "fast":   dict(model="acestep-v15-turbo", steps=8, guidance=None, shift=3.0),     # 2B turbo
+    "normal": dict(model="acestep-v15-xl-turbo", steps=8, guidance=None, shift=3.0),  # 4B turbo, bättre ljud
+    "high":   dict(model="acestep-v15-xl-sft", steps=50, guidance=7.0, shift=1.0),    # 4B sft, bäst men långsam
+}
+dit = None
+DIT_MODEL = None
+
+
+def load_dit(model):
+    """Laddar (eller byter till) musikmodellen. Byte tar ca 1–3 min, första gången också nedladdning."""
+    global dit, DIT_MODEL
+    if dit is not None and DIT_MODEL == model:
+        return
+    big = "-xl-" in model
+    if dit is not None:
+        wp(0.05, "Byter musikmodell")
+        dit = None
+        _gc.collect()
+        if dev == "cuda":
+            torch.cuda.empty_cache()
+    if big and not check_model_exists(model, ck):
+        free = shutil.disk_usage(str(ck)).free / 1024**3
+        if free < 25:
+            raise RuntimeError(f"XL-modellen behöver ca 20 GB ledigt diskutrymme men bara {free:.0f} GB finns. "
+                               "Välj kvalitet Snabb, eller starta om sessionen så töms disken.")
+        wp(0.06, "Laddar ner XL-modellen (bara första gången, ca 10–20 GB)")
+    wp(0.10, "Laddar musikmodellen" + (" (XL)" if big else ""))
+    h = AceStepHandler()
+    # XL (4B) behöver avlastning till vanligt minne på kort under 20 GB (T4 i Colab/Kaggle har 15–16 GB)
+    msg, ok = h.initialize_service(project_root=ACE, config_path=model, device=dev,
+                                   use_flash_attention=False, compile_model=False,
+                                   offload_to_cpu=offload or (big and gc.gpu_memory_gb < 20),
+                                   offload_dit_to_cpu=big and gc.gpu_memory_gb < 14)
+    if not ok:
+        raise RuntimeError(f"Musikmodellen ({model}) startade inte: {msg}")
+    dit, DIT_MODEL = h, model
+
+
+load_dit(QUALITY["fast"]["model"])
 
 wp(0.16, "Laddar språkmodellen som planerar låten")
 llm = LLMHandler()
@@ -89,7 +125,10 @@ def run_job(j):
     bpm = int(j.get("bpm") or 0) or None
     seconds = float(j.get("seconds") or 0)
     duration = max(10.0, min(240.0, seconds)) if seconds > 0 else -1.0
-    variants = max(1, min(2, int(j.get("variants") or 1)))
+    variants = max(1, min(4, int(j.get("variants") or 1)))
+    q = QUALITY.get(j.get("quality") or "fast", QUALITY["fast"])
+    if task == "song" or j.get("quality"):
+        load_dit(q["model"])
     seed = int(j.get("seed", -1))
     if seed < 0:
         seed = int.from_bytes(os.urandom(3), "little")
@@ -114,17 +153,12 @@ def run_job(j):
     if not caption:
         caption = "instrumental music" if instrumental else "pop song"
 
-    def progress(*args, **kw):
-        try:
-            f = float(args[0]) if args else float(kw.get("value", 0) or 0)
-        except Exception:
-            f = 0.0
-        wp(0.3 + 0.65 * max(0.0, min(1.0, f)), kw.get("desc") or (args[1] if len(args) > 1 else "") or "Skapar låten")
-
     kw = dict(caption=caption[:512], lyrics="[Instrumental]" if instrumental else lyrics[:4096],
               instrumental=instrumental, vocal_language="unknown" if instrumental else lang,
-              bpm=bpm, duration=duration, inference_steps=int(j.get("steps") or 8), seed=seed, shift=3.0,
-              thinking=LM_OK and task == "song")
+              bpm=bpm, duration=duration, inference_steps=int(j.get("steps") or q["steps"]), seed=seed,
+              shift=q["shift"], thinking=LM_OK and task == "song")
+    if q["guidance"] and "turbo" not in (DIT_MODEL or ""):
+        kw.update(guidance_scale=q["guidance"])
     if task in ("repaint", "cover"):
         if not j.get("src") or not os.path.exists(j["src"]):
             raise RuntimeError("Ladda upp låten som ska ändras.")
@@ -136,21 +170,39 @@ def run_job(j):
             kw.update(audio_cover_strength=max(0.05, min(1.0, float(j.get("strength", 0.5)))))
     wp(0.3, {"song": "Komponerar låten", "repaint": "Gör om den valda delen", "cover": "Gör en ny version"}[task])
     params = GenerationParams(**kw)
-    config = GenerationConfig(batch_size=variants, use_random_seed=False, seeds=seeds, audio_format="wav")
+    # Flera versioner görs i omgångar så att grafikkortets minne räcker (XL på T4: en i taget)
+    big = "-xl-" in (DIT_MODEL or "")
+    cap = 1 if big and gc.gpu_memory_gb < 20 else (2 if gc.gpu_memory_gb < 20 else 4)
     save_dir = str(TMP / f"ace_{time.time_ns()}")
     os.makedirs(save_dir, exist_ok=True)
-    res = generate_music(dit, llm, params, config, save_dir=save_dir, progress=progress)
-    if not res.success or not res.audios:
-        raise RuntimeError(f"ACE-Step misslyckades: {res.error or res.status_message}")
-
     prefix = {"song": "lat", "repaint": "lat_andrad", "cover": "lat_ny_stil"}[task]
-    outs = []
-    for i, au in enumerate(res.audios):
-        sd = (au.get("params") or {}).get("seed", seeds[min(i, len(seeds) - 1)])
-        out = new_path(f"{prefix}_{sd}_v{i + 1}", "wav")
-        to_wav(au["path"], out)
-        outs.append(out)
-    meta = {"task": task, "seed": seed, "seeds": seeds, "caption": caption,
+    outs, used = [], []
+    for start in range(0, len(seeds), cap):
+        part = seeds[start:start + cap]
+        n0, n = start, len(seeds)
+
+        def prog(*args, _n0=n0, _k=len(part), **kw2):
+            try:
+                f = float(args[0]) if args else float(kw2.get("value", 0) or 0)
+            except Exception:
+                f = 0.0
+            f = (_n0 + max(0.0, min(1.0, f)) * _k) / n
+            d = kw2.get("desc") or (args[1] if len(args) > 1 else "") or "Skapar låten"
+            wp(0.3 + 0.65 * f, (f"Version {_n0 + 1}–{_n0 + _k} av {n}: " if n > 1 else "") + d)
+        config = GenerationConfig(batch_size=len(part), use_random_seed=False, seeds=part, audio_format="wav")
+        res = generate_music(dit, llm, params, config, save_dir=save_dir, progress=prog)
+        if not res.success or not res.audios:
+            if outs:   # några versioner blev klara – lämna dem i stället för att kasta allt
+                print("Fler versioner misslyckades:", res.error or res.status_message, flush=True)
+                break
+            raise RuntimeError(f"ACE-Step misslyckades: {res.error or res.status_message}")
+        for i, au in enumerate(res.audios):
+            sd = (au.get("params") or {}).get("seed", part[min(i, len(part) - 1)])
+            out = new_path(f"{prefix}_{sd}_v{len(outs) + 1}", "wav")
+            to_wav(au["path"], out)
+            outs.append(out)
+            used.append(sd)
+    meta = {"task": task, "seed": seed, "seeds": used, "caption": caption, "model": DIT_MODEL,
             "lyrics": "" if instrumental else lyrics, "language": lang, "bpm": bpm, "duration": duration}
     mpath = os.path.splitext(outs[0])[0] + ".json"
     json.dump(meta, open(mpath, "w"), ensure_ascii=False, indent=1)

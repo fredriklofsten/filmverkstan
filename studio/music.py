@@ -17,7 +17,7 @@ import wave
 
 import numpy as np
 
-from common import BEFORE_WORKER, TMP, WORKERS, env as _env, ffmpeg, iter_lines, new_path, run_worker
+from common import BEFORE_WORKER, OUT, TMP, WORKERS, env as _env, ffmpeg, iter_lines, new_path, run_worker
 
 SR = 44100
 MOODS = {
@@ -388,13 +388,163 @@ def to_mp3(wav):
     return mp3
 
 
+QUALITIES = {   # namn i gränssnittet -> nivå i ACE-Step-arbetaren
+    "Snabb (ca 1 min)": "fast",
+    "Normal – XL-modellen (ca 2–4 min)": "normal",
+    "Hög kvalitet – XL, 50 steg (ca 8–15 min)": "high",
+}
+
+
 def song(caption_en, query="", lyrics="", write_lyrics=False, language="sv", seconds=0, bpm=0, seed=-1,
-         variants=1, progress=None):
-    """Gör en låt (1–2 versioner) med ACE-Step. Returnerar (wav-lista, info med låttext m.m.)."""
+         variants=1, quality="fast", progress=None):
+    """Gör en låt (1–4 versioner) med ACE-Step. Returnerar (wav-lista, info med låttext m.m.)."""
     return ace_job({"task": "song", "caption": caption_en, "query": query, "lyrics": lyrics,
                     "write_lyrics": bool(write_lyrics), "language": language, "seconds": float(seconds or 0),
                     "bpm": int(bpm or 0), "seed": int(seed if seed is not None else -1),
-                    "variants": int(variants or 1)}, progress)
+                    "variants": int(variants or 1), "quality": quality}, progress)
+
+
+# ---------------- Mastering ----------------
+MASTER_LUFS = -14   # samma nivå som Spotify och YouTube spelar upp med
+
+
+def master(wav, lufs=MASTER_LUFS):
+    """Automatisk mastering: tar bort muller, lätt kompressor, jämn ljudstyrka (-14 LUFS) och limiter.
+    Sparar <namn>_master.wav (24-bit) bredvid originalet och returnerar sökvägen."""
+    out = os.path.splitext(wav)[0] + "_master.wav"
+    pre = ("highpass=f=30,"
+           "acompressor=threshold=0.125:ratio=2:attack=20:release=250:makeup=1:knee=4")
+    # Steg 1: mät ljudstyrkan efter kompressorn
+    r = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-i", wav, "-af",
+                        f"{pre},loudnorm=I={lufs}:TP=-1.0:LRA=11:print_format=json", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    af = f"{pre},loudnorm=I={lufs}:TP=-1.0:LRA=11"
+    try:
+        js = r.stderr[r.stderr.rindex("{"):r.stderr.rindex("}") + 1]
+        m = json.loads(js)
+        af += (f":measured_I={m['input_i']}:measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}"
+               f":measured_thresh={m['input_thresh']}:offset={m['target_offset']}:linear=true")
+    except Exception:
+        pass   # mätningen misslyckades – kör vanlig (dynamisk) normalisering
+    # Steg 2: rätt ljudstyrka + limiter som fångar topparna (max -1 dB)
+    af += ",alimiter=limit=0.89:attack=5:release=50:level=disabled"
+    sr = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=sample_rate",
+                         "-of", "csv=p=0", wav], capture_output=True, text=True).stdout.strip() or "48000"
+    subprocess.run([ffmpeg(), "-y", "-loglevel", "error", "-i", wav, "-af", af, "-ar", sr, "-c:a", "pcm_s24le", out],
+                   check=True)
+    return out
+
+
+def loudness(wav):
+    """Mäter ljudstyrkan (LUFS) – för att visa före/efter."""
+    r = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-i", wav, "-af", "ebur128", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    try:
+        part = r.stderr[r.stderr.rindex("Integrated loudness"):]
+        return float(part.split("I:")[1].split("LUFS")[0])
+    except Exception:
+        return None
+
+
+# ---------------- Uttal (fonetisk text) ----------------
+def parse_pron(text):
+    """'sjö = schö' per rad -> [(ord, uttal)]. Tomma rader och rader utan '=' hoppas över."""
+    pairs = []
+    for line in (text or "").splitlines():
+        if "=" in line:
+            w, say = (x.strip() for x in line.split("=", 1))
+            if w and say:
+                pairs.append((w, say))
+    return pairs
+
+
+def apply_pron(lyrics, pron_text):
+    """Byter ut ord i låttexten mot hur de ska sjungas (hela ord, oavsett stor/liten bokstav).
+    Taggar som [verse] och [chorus] lämnas orörda."""
+    import re
+    pairs = parse_pron(pron_text)
+    if not pairs or not lyrics:
+        return lyrics
+    out = []
+    for line in lyrics.splitlines():
+        if line.strip().startswith("[") and line.strip().endswith("]"):
+            out.append(line)
+            continue
+        for w, say in sorted(pairs, key=lambda p: -len(p[0])):
+            def sub(m, say=say):
+                t = m.group(0)
+                return say[:1].upper() + say[1:] if t[:1].isupper() else say
+            line = re.sub(r"(?<![\wåäöÅÄÖ])" + re.escape(w) + r"(?![\wåäöÅÄÖ])", sub, line, flags=re.IGNORECASE)
+        out.append(line)
+    return "\n".join(out)
+
+
+def preview_lyrics(lyrics, max_lines=4):
+    """Början av texten (första taggen + några rader) för att provlyssna innan hela låten görs."""
+    out, n = [], 0
+    for line in (lyrics or "").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("[") and s.endswith("]"):
+            if n >= max_lines:
+                break
+            out.append(s)
+            continue
+        out.append(s)
+        n += 1
+        if n >= max_lines:
+            break
+    return "\n".join(out)
+
+
+# ---------------- Bibliotek och sparade inställningar ----------------
+SETTINGS = OUT / "musik_installningar.json"
+
+
+def save_settings(d):
+    try:
+        json.dump(d, open(SETTINGS, "w"), ensure_ascii=False, indent=1)
+    except Exception as e:
+        print("Kunde inte spara inställningarna:", e, flush=True)
+
+
+def load_settings():
+    try:
+        return json.load(open(SETTINGS))
+    except Exception:
+        return {}
+
+
+def save_meta(wav, d):
+    """Sparar allt om en version (text, stil, inställningar, frö) som <namn>.json bredvid ljudet."""
+    path = os.path.splitext(wav)[0] + ".json"
+    json.dump(d, open(path, "w"), ensure_ascii=False, indent=1)
+    return path
+
+
+def library():
+    """Alla sparade låtar, nyast först: [(etikett, sökväg till json)]."""
+    items = []
+    for js in OUT.glob("lat*_v*.json"):
+        try:
+            d = json.load(open(js))
+        except Exception:
+            continue
+        if not d.get("wav") or not os.path.exists(d["wav"]):
+            continue
+        first = next((l.strip() for l in (d.get("lyrics") or "").splitlines()
+                      if l.strip() and not l.strip().startswith("[")), "")
+        title = d.get("title") or first or d.get("query") or d.get("caption") or "Låt"
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(js.stat().st_mtime))
+        label = f"{when} · {title[:40]} · v{d.get('version', 1)} · frö {d.get('seed')}"
+        if d.get("preview"):
+            label += " · provlyssning"
+        if d.get("task") and d["task"] != "song":
+            label += " · " + {"repaint": "ändrad", "cover": "ny stil"}.get(d["task"], d["task"])
+        items.append((js.stat().st_mtime, label, str(js)))
+    items.sort(reverse=True)
+    return [(l, p) for _, l, p in items]
 
 
 def repaint(src, start, end, caption_en, lyrics="", language="sv", seed=-1, progress=None):

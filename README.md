@@ -60,3 +60,11 @@ Modellerna har egna licenser (LTX-Video: Lightricks open weights-licens, RealVis
 - **🎬 Musikvideo:** bilder som följer låttexten, mjuka kamerarörelser (eller rörliga scener) och texten i takt med sången.
 - **Filmmusiken (🤖) görs nu med ACE-Step** – instrumentalt och med MIT-licens, så filmerna får säljas. MusicGen och kodmusiken finns kvar som reserv.
 - **MP3** (320 kbit/s) sparas bredvid varje WAV-fil.
+
+## Nytt i v2.6 (Musikverkstan-uppgraderingen, del 1)
+- **🎚️ Automatisk mastering:** varje låt får jämn ljudstyrka (-14 LUFS, samma som Spotify och YouTube), en lätt kompressor och en limiter (max -1 dB). Kan stängas av; lyssna på *Före mastering* för att jämföra. Mastrad fil sparas som 24-bit WAV.
+- **Upp till 4 versioner** av samma låt. Varje version visar sitt frö – *🎲 Behåll fröet* skriver in det så att du kan göra om favoriten.
+- **Kvalitetsreglage:** *Snabb* (2B turbo), *Normal* (nya **XL-modellen, 4B**, bättre ljud) och *Hög kvalitet* (XL sft, 50 steg). XL laddas ner första gången den används (10–20 GB). Senast valda inställningar sparas.
+- **🗣️ Uttal:** skriv `ord = så som det ska sjungas` om AI:n uttalar svenska ord fel. Bara det som skickas till AI:n ändras.
+- **🎧 Provlyssna början:** gör ca 30 sekunder av början av texten för att höra uttalet innan hela låten görs.
+- **📚 Mina låtar:** alla låtar sparas med text, stil, inställningar och frö. Lyssna, ladda ner, ladda in inställningarna igen eller skicka låten till Redigera/Musikvideo.
