@@ -341,8 +341,16 @@ def _read_until(p, progress, end_markers):
             print(line, flush=True)
             if "%|" not in line:
                 tail = (tail + [line])[-20:]
+    try:
+        code = p.wait(timeout=10)
+    except Exception:
+        code = None
+    if code in (-9, 137):
+        raise RuntimeError("ACE-Step stängdes: datorns minne (RAM) tog slut. Prova kvalitet Snabb eller en version i "
+                           "taget. På Kaggle finns mer minne.")
     errs = [l for l in tail if "rror" in l]
-    raise RuntimeError("ACE-Step stängdes oväntat: " + ((errs[-1] if errs else " ".join(tail[-4:]))[-500:]))
+    raise RuntimeError(f"ACE-Step stängdes oväntat (kod {code}): "
+                       + ((errs[-1] if errs else " ".join(tail[-4:]))[-500:]))
 
 
 def _start_ace(progress):

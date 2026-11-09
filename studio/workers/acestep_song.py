@@ -53,7 +53,9 @@ if not check_main_model_exists(ck):
         raise RuntimeError(f"Kunde inte ladda ner ACE-Step: {msg}")
 
 dev = "cuda" if torch.cuda.is_available() else "cpu"
-offload = dev == "cuda" and gc.gpu_memory_gb < 20
+# Avlastning till vanligt minne bara på små kort: gratis-Colab har bara ca 12 GB RAM, och 2B-modellen
+# (ca 5 GB) + språkmodellen (ca 3,5 GB) får plats direkt på T4-kortets 15 GB.
+offload = dev == "cuda" and gc.gpu_memory_gb < 12
 
 # Kvalitetsnivåer: modell, antal steg, guidance (bara för icke-turbo) och shift
 QUALITY = {
@@ -89,7 +91,7 @@ def load_dit(model):
     msg, ok = h.initialize_service(project_root=ACE, config_path=model, device=dev,
                                    use_flash_attention=False, compile_model=False,
                                    offload_to_cpu=offload or (big and gc.gpu_memory_gb < 20),
-                                   offload_dit_to_cpu=big and gc.gpu_memory_gb < 14)
+                                   offload_dit_to_cpu=False)
     if not ok:
         raise RuntimeError(f"Musikmodellen ({model}) startade inte: {msg}")
     dit, DIT_MODEL = h, model
