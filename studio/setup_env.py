@@ -43,7 +43,8 @@ ST = "/content/SadTalker"
 print("2/5 SadTalker (pratande ansikten)…", flush=True)
 if not os.path.exists(ST):
     sh(f"git clone -q --depth 1 https://github.com/OpenTalker/SadTalker.git {ST}")
-GH = "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/"
+GH = "https://huggingface.co/vinthony/SadTalker-V002rc/resolve/main/"   # upphovsmannens egen kopia
+GH_ALT = "https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/"
 FX = "https://github.com/xinntao/facexlib/releases/download/"
 files = {
     "checkpoints/mapping_00109-model.pth.tar": GH + "mapping_00109-model.pth.tar",
@@ -60,7 +61,13 @@ for rel, url in files.items():
     os.makedirs(os.path.dirname(p), exist_ok=True)
     if not os.path.exists(p):
         print("  hämtar", rel, flush=True)
-        fetch(url, p + ".part")
+        try:
+            fetch(url, p + ".part", tries=3)
+        except Exception:
+            if not url.startswith(GH):
+                raise
+            print("    provar GitHub i stället", flush=True)
+            fetch(GH_ALT + url[len(GH):], p + ".part")
         os.rename(p + ".part", p)
 
 
