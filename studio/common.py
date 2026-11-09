@@ -39,6 +39,10 @@ def env():
     if os.environ.get("FV_DRIVE_MODELS") == "1" and DRIVE_MOUNTED:
         e["HF_HOME"] = str(DRIVE_ROOT / "modeller" / "hf")
     e.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    # Colab sätter matplotlibs backend till sin egen notebook-modul, som inte finns i arbetarnas
+    # egna Python-miljöer (t.ex. ACE-Step) – där kraschar matplotlib vid import. Använd vanliga Agg.
+    if e.get("MPLBACKEND", "").startswith("module://"):
+        e["MPLBACKEND"] = "Agg"
     return e
 
 
