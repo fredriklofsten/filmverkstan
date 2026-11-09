@@ -23,6 +23,7 @@ MODELS = [
     ("textmodell för video", "city96/t5-v1_1-xxl-encoder-bf16", ["*.json", "*.safetensors"], 12),
     ("videomodell", "Lightricks/LTX-Video-0.9.5",
      ["model_index.json", "scheduler/*", "transformer/*", "vae/*"], 10),
+    ("musikmodell", "facebook/musicgen-medium", ["*.json", "*.safetensors", "spiece.model"], 8),
 ]
 
 

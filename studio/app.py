@@ -14,7 +14,7 @@ import voice  # noqa: E402
 from common import OUT, DRIVE_MOUNTED, KAGGLE, run_worker, WorkerError  # noqa: E402
 from translate import to_english  # noqa: E402
 
-VERSION = "2.2"
+VERSION = "2.3"
 
 
 def gpu_text():
@@ -130,6 +130,21 @@ def do_music(secs, mood, nature):
     return music.make(float(secs), mood, nature)
 
 
+def do_music_ai(desc, style, secs, size, seed, guidance, nature, progress=gr.Progress()):
+    text = (desc or "").strip()
+    if not text and style not in music.STYLES:
+        raise gr.Error("Skriv en beskrivning eller välj en färdig stil.")
+    en = to_english(text) if text else music.STYLES[style]
+    if text and style in music.STYLES:
+        en = f"{en}, {music.STYLES[style]}"
+    try:
+        out = music.ai(en, float(secs), music.SIZES[size], int(seed), float(guidance), bool(nature), progress=progress)
+    except Exception as e:
+        err(e)
+    name = os.path.basename(out)
+    return out, f"✅ Klar: `{name}`  \n🎼 Beskrivning till AI:n: *{en}*  \n🎲 Frö: **{name.split('_')[2]}** (skriv in det för att få samma låt igen)"
+
+
 def add_film(path, cur):
     if not path:
         raise gr.Error("Skapa något först.")
@@ -191,7 +206,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 with gr.Row():
                     a_model = gr.Radio(VIDEO_MODELS, value=VIDEO_MODELS[0], label="Videomodell")
                     a_sfx = gr.Checkbox(True, label="Ljudeffekter (MMAudio)")
-                a_mood = gr.Dropdown(list(music.MOODS), value=list(music.MOODS)[0], label="Musik")
+                a_mood = gr.Dropdown(music.ALL_MOODS, value=list(music.MOODS)[0], label="Musik (🤖 = AI-musik, tar några min extra)")
                 a_go = gr.Button("2. Gör filmen", variant="primary")
                 a_out = gr.Video(label="Färdig film")
 
@@ -273,14 +288,40 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 v_btn = gr.Button("Skapa röst", variant="primary")
             v_out = gr.Audio(label="Resultat", type="filepath")
 
-    with gr.Tab("5. Musik"):
-        with gr.Row():
-            with gr.Column():
-                m_secs = gr.Slider(5, 180, value=30, step=1, label="Längd (sek)")
-                m_mood = gr.Dropdown(list(music.MOODS), value=list(music.MOODS)[0], label="Stämning")
-                m_nat = gr.Checkbox(True, label="Naturljud")
-                m_btn = gr.Button("Skapa musik", variant="primary")
-            m_out = gr.Audio(label="Resultat", type="filepath")
+    with gr.Tab("5. Musik"), gr.Tabs():
+        with gr.Tab("🤖 AI-musik (MusicGen)"):
+            gr.Markdown("Beskriv musiken – gärna **stil, instrument, stämning och tempo** – eller välj en färdig stil. "
+                        "Svenska översätts automatiskt. Ingen sång, bara instrument. "
+                        "Ca 1–2 min per 30 sekunder musik (första gången laddas modellen ner).")
+            with gr.Row():
+                with gr.Column():
+                    am_desc = gr.Textbox(label="Beskrivning (valfritt)", lines=3,
+                                         placeholder="lugn akustisk gitarr och piano, varm känsla, som en morgon i skogen, 80 bpm")
+                    am_style = gr.Dropdown(["(ingen)"] + list(music.STYLES), value="Lugn akustisk (skog, natur)",
+                                           label="Färdig stil (läggs till beskrivningen)")
+                    with gr.Row():
+                        am_secs = gr.Slider(5, 180, value=30, step=5, label="Längd (sek)")
+                        am_size = gr.Radio(list(music.SIZES), value="Bra (medium)", label="Kvalitet")
+                    with gr.Accordion("Mer", open=False):
+                        am_seed = gr.Number(-1, precision=0, label="Frö (-1 = slumpa, samma frö = samma låt)")
+                        am_guid = gr.Slider(1.0, 6.0, value=3.0, step=0.5,
+                                            label="Hur noga beskrivningen följs (högre = noggrannare, mindre variation)")
+                        am_nat = gr.Checkbox(False, label="Lägg till naturljud (vind och fåglar)")
+                    am_btn = gr.Button("🎵 Skapa AI-musik", variant="primary")
+                with gr.Column():
+                    am_out = gr.Audio(label="Resultat", type="filepath")
+                    am_info = gr.Markdown()
+                    gr.Markdown("<small>MusicGen-modellerna har licensen CC-BY-NC 4.0: fritt för egna och "
+                                "icke-kommersiella filmer, men inte för att sälja eller tjäna pengar på.</small>")
+        with gr.Tab("Enkel musik (kod)"):
+            gr.Markdown("Snabb bakgrundsmusik som skapas direkt med kod – ingen AI, inga licensfrågor.")
+            with gr.Row():
+                with gr.Column():
+                    m_secs = gr.Slider(5, 180, value=30, step=1, label="Längd (sek)")
+                    m_mood = gr.Dropdown(list(music.MOODS), value=list(music.MOODS)[0], label="Stämning")
+                    m_nat = gr.Checkbox(True, label="Naturljud")
+                    m_btn = gr.Button("Skapa musik", variant="primary")
+                m_out = gr.Audio(label="Resultat", type="filepath")
 
     with gr.Tab("6. Bygg film"):
         gr.Markdown("Lägg in **en bild eller ett klipp per scen** i rätt ordning och skriv **en replik per rad**. "
@@ -298,7 +339,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                     f_ref = gr.Audio(label="Röst att härma (valfritt)", type="filepath")
                 with gr.Row():
                     f_speed = gr.Slider(0.8, 1.2, value=1.0, step=0.05, label="Tempo")
-                    f_mood = gr.Dropdown(list(music.MOODS), value=list(music.MOODS)[0], label="Musik")
+                    f_mood = gr.Dropdown(music.ALL_MOODS, value=list(music.MOODS)[0], label="Musik (🤖 = AI)")
                     f_nat = gr.Checkbox(True, label="Naturljud")
                 f_btn = gr.Button("Bygg filmen", variant="primary")
             f_out = gr.Video(label="Färdig film")
@@ -318,6 +359,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast, t_expr, t_lips], t_out)
     v_btn.click(do_voice, [v_text, v_engine, v_ref, v_style, v_speed, v_emo], v_out)
     m_btn.click(do_music, [m_secs, m_mood, m_nat], m_out)
+    am_btn.click(do_music_ai, [am_desc, am_style, am_secs, am_size, am_seed, am_guid, am_nat], [am_out, am_info])
     s_add.click(add_film, [s_out, film], [film, f_files])
     t_add.click(add_film, [t_out, film], [film, f_files])
     f_btn.click(do_film, [f_files, f_lines, f_aspect, f_engine, f_ref, f_speed, f_mood, f_nat, f_subs, f_music], f_out)
