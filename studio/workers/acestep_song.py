@@ -40,7 +40,7 @@ from acestep.handler import AceStepHandler  # noqa: E402
 from acestep.llm_inference import LLMHandler  # noqa: E402
 from acestep.inference import GenerationParams, GenerationConfig, generate_music, create_sample  # noqa: E402
 from acestep.model_downloader import (ensure_main_model, get_checkpoints_dir, check_main_model_exists,  # noqa: E402
-                                      check_model_exists)
+                                      check_model_exists, ensure_lm_model)
 from acestep.constants import TASK_INSTRUCTIONS  # noqa: E402
 
 gc = get_gpu_config()
@@ -53,6 +53,9 @@ if not check_main_model_exists(ck):
         raise RuntimeError(f"Kunde inte ladda ner ACE-Step: {msg}")
 
 dev = "cuda" if torch.cuda.is_available() else "cpu"
+# Äldre kort (T4, P100 – Colab/Kaggle gratis) saknar bfloat16. Då kör ACE-Step i float16, som svämmar över
+# (NaN, tyst/trasig låt). Lösning: musikmodellen i float32 och den mindre språkmodellen (0.6B) så att allt ryms.
+OLD_GPU = dev == "cuda" and torch.cuda.get_device_capability()[0] < 8
 # Avlastning till vanligt minne bara på små kort: gratis-Colab har bara ca 12 GB RAM, och 2B-modellen
 # (ca 5 GB) + språkmodellen (ca 3,5 GB) får plats direkt på T4-kortets 15 GB.
 offload = dev == "cuda" and gc.gpu_memory_gb < 12
@@ -73,6 +76,12 @@ def load_dit(model):
     if dit is not None and DIT_MODEL == model:
         return
     big = "-xl-" in model
+    if big and OLD_GPU:
+        # XL i float32 (ca 18 GB) får inte plats på T4/P100, och i float16 blir det NaN
+        print("XL-modellen kräver ett nyare grafikkort (A100/L4) – använder 2B-modellen i stället.", flush=True)
+        model, big = QUALITY["fast"]["model"], False
+    if dit is not None and DIT_MODEL == model:
+        return
     if dit is not None:
         wp(0.05, "Byter musikmodell")
         dit = None
@@ -94,6 +103,17 @@ def load_dit(model):
                                    offload_dit_to_cpu=False)
     if not ok:
         raise RuntimeError(f"Musikmodellen ({model}) startade inte: {msg}")
+    if OLD_GPU:
+        wp(0.12, "Ställer om till float32 (äldre grafikkort)")
+        h.dtype = torch.float32
+        for name in ("model", "text_encoder"):
+            m = getattr(h, name, None)
+            if m is not None and not isinstance(m, torch.Tensor):
+                setattr(h, name, m.to(torch.float32))
+        sl = getattr(h, "silence_latent", None)
+        if isinstance(sl, torch.Tensor):
+            h.silence_latent = sl.to(torch.float32)
+        torch.cuda.empty_cache()
     dit, DIT_MODEL = h, model
 
 
@@ -102,7 +122,10 @@ load_dit(QUALITY["fast"]["model"])
 wp(0.16, "Laddar språkmodellen som planerar låten")
 llm = LLMHandler()
 try:
-    msg, ok = llm.initialize(checkpoint_dir=str(ck), lm_model_path="acestep-5Hz-lm-1.7B", backend="pt",
+    LM_NAME = "acestep-5Hz-lm-0.6B" if OLD_GPU else "acestep-5Hz-lm-1.7B"
+    if OLD_GPU:
+        ensure_lm_model(LM_NAME, ck)
+    msg, ok = llm.initialize(checkpoint_dir=str(ck), lm_model_path=LM_NAME, backend="pt",
                              device=dev, offload_to_cpu=offload)
     if not ok:
         print("Språkmodellen startade inte – kör utan den:", msg, flush=True)
@@ -174,7 +197,7 @@ def run_job(j):
     params = GenerationParams(**kw)
     # Flera versioner görs i omgångar så att grafikkortets minne räcker (XL på T4: en i taget)
     big = "-xl-" in (DIT_MODEL or "")
-    cap = 1 if big and gc.gpu_memory_gb < 20 else (2 if gc.gpu_memory_gb < 20 else 4)
+    cap = 1 if (OLD_GPU or big and gc.gpu_memory_gb < 20) else (2 if gc.gpu_memory_gb < 20 else 4)
     save_dir = str(TMP / f"ace_{time.time_ns()}")
     os.makedirs(save_dir, exist_ok=True)
     prefix = {"song": "lat", "repaint": "lat_andrad", "cover": "lat_ny_stil"}[task]
