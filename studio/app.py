@@ -14,7 +14,7 @@ import voice  # noqa: E402
 from common import OUT, DRIVE_MOUNTED, KAGGLE, run_worker, WorkerError  # noqa: E402
 from translate import to_english  # noqa: E402
 
-VERSION = "2.3"
+VERSION = "2.4"
 
 
 def gpu_text():
@@ -143,6 +143,27 @@ def do_music_ai(desc, style, secs, size, seed, guidance, nature, progress=gr.Pro
         err(e)
     name = os.path.basename(out)
     return out, f"✅ Klar: `{name}`  \n🎼 Beskrivning till AI:n: *{en}*  \n🎲 Frö: **{name.split('_')[2]}** (skriv in det för att få samma låt igen)"
+
+
+def do_song(desc, lyrics, write, lang_name, secs, bpm, seed, progress=gr.Progress()):
+    desc = (desc or "").strip()
+    lyrics = (lyrics or "").strip()
+    lang = music.LANGUAGES.get(lang_name, "sv")
+    if not desc and not lyrics:
+        raise gr.Error("Beskriv låten eller skriv en låttext.")
+    write = lang != "none" and (bool(write) or not lyrics)
+    try:
+        wav, info = music.song(to_english(desc) if desc else "", query=desc, lyrics=lyrics, write_lyrics=write,
+                               language=lang, seconds=float(secs), bpm=int(bpm or 0), seed=int(seed),
+                               progress=progress)
+    except Exception as e:
+        err(e)
+    md = (f"✅ Klar: `{os.path.basename(wav)}`  \n🎲 Frö: **{info.get('seed')}** (samma frö + samma text = samma låt)  \n"
+          f"🎼 Stil: *{info.get('caption', '')[:300]}*")
+    if write:
+        md += "  \n✍️ AI:n skrev texten – den står i rutan *Låttext*. Ändra den gärna och tryck *Skapa låt* igen."
+    new_lyrics = info.get("lyrics") or lyrics
+    return wav, md, new_lyrics, False
 
 
 def add_film(path, cur):
@@ -289,6 +310,32 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
             v_out = gr.Audio(label="Resultat", type="filepath")
 
     with gr.Tab("5. Musik"), gr.Tabs():
+        with gr.Tab("🎤 Låt med sång (ACE-Step)"):
+            gr.Markdown("Hela låtar med **sång** – på svenska, engelska m.fl. – eller instrumentalt. "
+                        "Skriv egen text eller låt AI:n skriva den. Ca 1–3 min per låt "
+                        "(första gången installeras ACE-Step, ca 10–15 min).")
+            with gr.Row():
+                with gr.Column():
+                    sg_desc = gr.Textbox(label="Beskriv låten (stil, instrument, stämning, röst)", lines=3,
+                                         placeholder="glad svensk sommarpop med akustisk gitarr och kvinnlig sång, "
+                                                     "handlar om att bada i sjön med vänner")
+                    sg_lyrics = gr.Textbox(label="Låttext (tom = AI:n skriver den)", lines=10,
+                                           placeholder="[verse]\nSolen glittrar på sjön\nvi springer ner till bryggan\n\n"
+                                                       "[chorus]\nHela sommaren är vår\n…")
+                    sg_write = gr.Checkbox(False, label="Låt AI:n skriva en ny text (ersätter texten ovan)")
+                    with gr.Row():
+                        sg_lang = gr.Dropdown(list(music.LANGUAGES), value="Svenska", label="Språk")
+                        sg_secs = gr.Slider(0, 240, value=0, step=5, label="Längd (sek, 0 = efter texten)")
+                    with gr.Accordion("Mer", open=False):
+                        sg_bpm = gr.Number(0, precision=0, label="Tempo i bpm (0 = AI:n väljer)")
+                        sg_seed = gr.Number(-1, precision=0, label="Frö (-1 = slumpa)")
+                    sg_btn = gr.Button("🎤 Skapa låt", variant="primary")
+                with gr.Column():
+                    sg_out = gr.Audio(label="Låt", type="filepath")
+                    sg_info = gr.Markdown()
+                    gr.Markdown("<small>💡 Märk upp texten med <b>[verse]</b>, <b>[chorus]</b>, <b>[bridge]</b> för "
+                                "tydligare låtform. ACE-Step har MIT-licens – du får använda låtarna kommersiellt, "
+                                "men se till att texten är din egen.</small>")
         with gr.Tab("🤖 AI-musik (MusicGen)"):
             gr.Markdown("Beskriv musiken – gärna **stil, instrument, stämning och tempo** – eller välj en färdig stil. "
                         "Svenska översätts automatiskt. Ingen sång, bara instrument. "
@@ -359,6 +406,8 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
     t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast, t_expr, t_lips], t_out)
     v_btn.click(do_voice, [v_text, v_engine, v_ref, v_style, v_speed, v_emo], v_out)
     m_btn.click(do_music, [m_secs, m_mood, m_nat], m_out)
+    sg_btn.click(do_song, [sg_desc, sg_lyrics, sg_write, sg_lang, sg_secs, sg_bpm, sg_seed],
+                 [sg_out, sg_info, sg_lyrics, sg_write])
     am_btn.click(do_music_ai, [am_desc, am_style, am_secs, am_size, am_seed, am_guid, am_nat], [am_out, am_info])
     s_add.click(add_film, [s_out, film], [film, f_files])
     t_add.click(add_film, [t_out, film], [film, f_files])

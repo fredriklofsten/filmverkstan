@@ -164,3 +164,56 @@ def ai(prompt_en, seconds, size="medium", seed=-1, guidance=3.0, nature=False, o
         except OSError:
             pass
     return str(out)
+
+
+# ---------------- Låtar med sång: ACE-Step 1.5 (MIT-licens – får användas kommersiellt) ----------------
+ACE_DIR = "/content/ACE-Step-1.5"
+ACE_PY = f"{ACE_DIR}/.venv/bin/python"
+ACE_OK = f"{ACE_DIR}/.fv_ok"
+ACE_COMMIT = "ca1e85fe9430179831e6bc6be790c332190a3866"   # testad version – byt bara efter test
+LANGUAGES = {"Svenska": "sv", "Engelska": "en", "Norska": "no", "Danska": "da", "Finska": "fi", "Tyska": "de",
+             "Spanska": "es", "Franska": "fr", "Instrumental (ingen sång)": "none"}
+
+
+def ensure_ace(progress=None):
+    """Installerar ACE-Step i en egen Python-miljö första gången (ca 5–10 min)."""
+    if os.path.exists(ACE_OK):
+        return
+    say = (lambda t: progress(0.01, desc=t)) if progress else print
+    import shutil
+    free = shutil.disk_usage("/content" if os.path.exists("/content") else "/").free / 1024**3
+    if free < 22:
+        raise RuntimeError(f"ACE-Step behöver ca 20 GB ledigt diskutrymme, men bara {free:.0f} GB finns. "
+                           "Starta om sessionen (då töms disken) och prova igen.")
+    say("Installerar ACE-Step (bara första gången, ca 5–10 min)")
+    import sys
+
+    def sh(cmd, cwd=None):
+        print("  $", " ".join(cmd), flush=True)
+        subprocess.run(cmd, check=True, cwd=cwd)
+
+    if not os.path.exists(f"{ACE_DIR}/pyproject.toml"):
+        os.makedirs(ACE_DIR, exist_ok=True)
+        sh(["git", "init", "-q"], ACE_DIR)
+        sh(["git", "remote", "add", "origin", "https://github.com/ACE-Step/ACE-Step-1.5.git"], ACE_DIR)
+        sh(["git", "fetch", "-q", "--depth", "1", "origin", ACE_COMMIT], ACE_DIR)
+        sh(["git", "checkout", "-q", "FETCH_HEAD"], ACE_DIR)
+    sh([sys.executable, "-m", "pip", "install", "-q", "uv"])
+    sh(["uv", "sync", "--frozen", "--python", "3.11"], ACE_DIR)
+    open(ACE_OK, "w").write("ok")
+
+
+def song(caption_en, query="", lyrics="", write_lyrics=False, language="sv", seconds=0, bpm=0, seed=-1,
+         progress=None):
+    """Gör en låt med ACE-Step. Returnerar (wav-sökväg, info-dict med låttext m.m.)."""
+    ensure_ace(progress)
+    res = run_worker("acestep_song.py", {"caption": caption_en, "query": query, "lyrics": lyrics,
+                                         "write_lyrics": bool(write_lyrics), "language": language,
+                                         "seconds": float(seconds or 0), "bpm": int(bpm or 0),
+                                         "seed": int(seed if seed is not None else -1), "ace_dir": ACE_DIR},
+                     progress, python=ACE_PY)
+    wav = next(r for r in res if r.endswith(".wav"))
+    js = next((r for r in res if r.endswith(".json")), None)
+    import json
+    info = json.load(open(js)) if js else {}
+    return wav, info

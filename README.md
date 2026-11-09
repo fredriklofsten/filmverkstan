@@ -10,7 +10,7 @@ Gratis AI-filmstudio som körs på Googles grafikkort i Colab.
 | 2. Rörlig scen | Gör en bild till en 2–6 sekunders videoscen | LTX-Video 0.9.5 |
 | 3. Pratklipp | Får en person på en bild att prata | SadTalker + GFPGAN |
 | 4. Röst | Svensk röst – naturlig eller snabb, kan härma en inspelning | Chatterbox Multilingual / Piper |
-| 5. Musik | AI-musik i valfri stil från en beskrivning, eller enkel bakgrundsmusik med naturljud | MusicGen (small/medium/large) / kod |
+| 5. Musik | Hela låtar med sång (svenska m.fl.), AI-musik i valfri stil, eller enkel bakgrundsmusik | ACE-Step 1.5 / MusicGen / kod |
 | 6. Bygg film | Sätter ihop allt med röst, text och musik | ffmpeg |
 
 Beskrivningar kan skrivas på svenska – de översätts automatiskt (Helsinki-NLP opus-mt-sv-en).
@@ -22,7 +22,7 @@ Beskrivningar kan skrivas på svenska – de översätts automatiskt (Helsinki-N
 - `studio/workers/` – varje AI-modell körs i en egen process så att minnet frigörs efteråt
 
 ## Licenser
-Modellerna har egna licenser (LTX-Video: Lightricks open weights-licens, RealVisXL: OpenRAIL++, SadTalker: Apache 2.0, Chatterbox: MIT, MusicGen: CC-BY-NC 4.0, Piper-röst: se rhasspy/piper-voices). **MusicGen: CC-BY-NC 4.0 – inte för kommersiellt bruk.** Läs dem innan du använder resultat kommersiellt.
+Modellerna har egna licenser (LTX-Video: Lightricks open weights-licens, RealVisXL: OpenRAIL++, SadTalker: Apache 2.0, Chatterbox: MIT, MusicGen: CC-BY-NC 4.0, ACE-Step 1.5: MIT, Piper-röst: se rhasspy/piper-voices). **MusicGen: CC-BY-NC 4.0 – inte för kommersiellt bruk.** Läs dem innan du använder resultat kommersiellt.
 
 ## Kaggle (2 grafikkort, ca 30 h/vecka)
 1. Skapa ett gratis konto på kaggle.com och verifiera telefonnumret (Settings → Phone verification).
@@ -46,3 +46,8 @@ Modellerna har egna licenser (LTX-Video: Lightricks open weights-licens, RealVis
 - **🤖 AI-musik med MusicGen** (flik 5): beskriv musiken på svenska eller välj en av 12 färdiga stilar (lo-fi, episk orkester, synthwave, nordisk folkmusik …). Tre kvalitetsnivåer, upp till 3 minuter långa låtar (byggs i delar som fortsätter varandra), frö för att få samma låt igen och valfria naturljud.
 - **AI-musik i filmerna:** välj en stil som börjar med 🤖 under *Musik* i Snabbfilm eller Bygg film. Musiken läggs lägre under rösten. Om något går fel används den enkla musiken i stället.
 - Observera: MusicGen har licensen CC-BY-NC 4.0 – fritt för egna projekt, men inte för att sälja.
+
+## Nytt i v2.4
+- **🎤 Låt med sång (ACE-Step 1.5)** – flik 5: hela låtar med sång på svenska, engelska, norska m.fl., eller instrumentalt. Skriv egen låttext (gärna med `[verse]`, `[chorus]`, `[bridge]`) eller lämna den tom så skriver AI:n texten. Texten hamnar i rutan så att du kan ändra den och skapa låten igen.
+- ACE-Step har **MIT-licens** – låtarna får användas kommersiellt (till skillnad från MusicGen).
+- Installeras automatiskt första gången (ca 10–15 min, ca 20 GB disk) i en egen Python-miljö. Versionen är låst till en testad version.
