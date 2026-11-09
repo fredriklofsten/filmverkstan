@@ -51,3 +51,12 @@ Modellerna har egna licenser (LTX-Video: Lightricks open weights-licens, RealVis
 - **🎤 Låt med sång (ACE-Step 1.5)** – flik 5: hela låtar med sång på svenska, engelska, norska m.fl., eller instrumentalt. Skriv egen låttext (gärna med `[verse]`, `[chorus]`, `[bridge]`) eller lämna den tom så skriver AI:n texten. Texten hamnar i rutan så att du kan ändra den och skapa låten igen.
 - ACE-Step har **MIT-licens** – låtarna får användas kommersiellt (till skillnad från MusicGen).
 - Installeras automatiskt första gången (ca 10–15 min, ca 20 GB disk) i en egen Python-miljö. Versionen är låst till en testad version.
+
+## Nytt i v2.5
+- **Snabbare låtar:** ACE-Step ligger kvar i minnet mellan låtarna (på Kaggle på grafikkort 2). Den stängs automatiskt när videomodellerna behöver kortet och efter 10 minuter utan låtar.
+- **ACE-Step installeras redan när studion startar** (om det finns plats på disken), så första låten slipper vänta.
+- **2 versioner per låt** – lyssna på båda och välj den bästa med *✔ Använd version*.
+- **✂️ Redigera låt:** gör om en del av en låt (t.ex. sekund 30–45) eller gör en ny version i en annan stil.
+- **🎬 Musikvideo:** bilder som följer låttexten, mjuka kamerarörelser (eller rörliga scener) och texten i takt med sången.
+- **Filmmusiken (🤖) görs nu med ACE-Step** – instrumentalt och med MIT-licens, så filmerna får säljas. MusicGen och kodmusiken finns kvar som reserv.
+- **MP3** (320 kbit/s) sparas bredvid varje WAV-fil.

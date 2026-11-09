@@ -66,14 +66,15 @@ class WorkerError(RuntimeError):
     pass
 
 
-def run_worker(script, args, progress=None, python=None, cwd=None):
-    """Kör ett arbetsskript i en egen process (så minnet frigörs efteråt).
-    Skriptet skriver '@@P <0-1> <text>' för framsteg och '@@R <sökväg>' för resultat."""
-    cmd = [python or sys.executable, "-u", str(WORKERS / script), json.dumps(args)]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env(), cwd=cwd)
-    results, tail, buf = [], [], b""
+# Anropas innan ett arbetsskript startar (t.ex. för att stänga en modell som ligger kvar på grafikkortet)
+BEFORE_WORKER = []
+
+
+def iter_lines(stream):
+    """Läser rader från en process (även förloppsrader som slutar med \\r)."""
+    buf = b""
     while True:
-        chunk = p.stdout.read1(4096) if hasattr(p.stdout, "read1") else p.stdout.read(1)
+        chunk = stream.read1(4096) if hasattr(stream, "read1") else stream.read(1)
         if not chunk:
             break
         buf += chunk
@@ -81,22 +82,38 @@ def run_worker(script, args, progress=None, python=None, cwd=None):
         buf = parts.pop()
         for raw in parts:
             line = raw.decode("utf-8", "replace").strip()
-            if not line:
-                continue
-            if line.startswith("@@P "):
-                try:
-                    _, frac, *desc = line.split(" ")
-                    if progress:
-                        progress(float(frac), desc=" ".join(desc))
-                except Exception:
-                    pass
-            elif line.startswith("@@R "):
-                results.append(line[4:].strip())
-            else:
-                print(line, flush=True)
-                if "%|" not in line and not line.startswith(("Loading", "Fetching", "Downloading")):
-                    tail.append(line)
-                    tail = tail[-30:]
+            if line:
+                yield line
+    if buf.strip():
+        yield buf.decode("utf-8", "replace").strip()
+
+
+def run_worker(script, args, progress=None, python=None, cwd=None):
+    """Kör ett arbetsskript i en egen process (så minnet frigörs efteråt).
+    Skriptet skriver '@@P <0-1> <text>' för framsteg och '@@R <sökväg>' för resultat."""
+    for hook in BEFORE_WORKER:
+        try:
+            hook(script)
+        except Exception as e:
+            print("Förberedelse inför", script, "misslyckades:", e, flush=True)
+    cmd = [python or sys.executable, "-u", str(WORKERS / script), json.dumps(args)]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env(), cwd=cwd)
+    results, tail = [], []
+    for line in iter_lines(p.stdout):
+        if line.startswith("@@P "):
+            try:
+                _, frac, *desc = line.split(" ")
+                if progress:
+                    progress(float(frac), desc=" ".join(desc))
+            except Exception:
+                pass
+        elif line.startswith("@@R "):
+            results.append(line[4:].strip())
+        else:
+            print(line, flush=True)
+            if "%|" not in line and not line.startswith(("Loading", "Fetching", "Downloading")):
+                tail.append(line)
+                tail = tail[-30:]
     rc = p.wait()
     if rc != 0:
         errs = [l for l in tail if "Error" in l or "error" in l]

@@ -14,10 +14,13 @@ asr = pipeline("automatic-speech-recognition", model="openai/whisper-large-v3-tu
                torch_dtype=torch.float16, device="cuda:0")
 result = []
 for i, f in enumerate(files):
-    wp(0.2 + 0.75 * i / max(1, len(files)), f"Lyssnar på replik {i + 1} av {len(files)}")
+    wp(0.2 + 0.75 * i / max(1, len(files)), a.get("label") or f"Lyssnar på replik {i + 1} av {len(files)}")
     words = []
     try:
-        out = asr(f, return_timestamps="word", generate_kwargs={"language": "swedish", "task": "transcribe"})
+        gk = {"task": "transcribe"}
+        if a.get("language", "swedish"):
+            gk["language"] = a.get("language", "swedish")
+        out = asr(f, return_timestamps="word", generate_kwargs=gk, chunk_length_s=30, batch_size=4)
         for c in out.get("chunks", []):
             s, e = c.get("timestamp", (None, None))
             t = c.get("text", "").strip()

@@ -10,11 +10,12 @@ import gradio as gr  # noqa: E402
 import autofilm  # noqa: E402
 import montage  # noqa: E402
 import music  # noqa: E402
+import musicvideo  # noqa: E402
 import voice  # noqa: E402
 from common import OUT, DRIVE_MOUNTED, KAGGLE, run_worker, WorkerError  # noqa: E402
 from translate import to_english  # noqa: E402
 
-VERSION = "2.4"
+VERSION = "2.5"
 
 
 def gpu_text():
@@ -142,28 +143,84 @@ def do_music_ai(desc, style, secs, size, seed, guidance, nature, progress=gr.Pro
     except Exception as e:
         err(e)
     name = os.path.basename(out)
-    return out, f"✅ Klar: `{name}`  \n🎼 Beskrivning till AI:n: *{en}*  \n🎲 Frö: **{name.split('_')[2]}** (skriv in det för att få samma låt igen)"
+    mp3 = music.to_mp3(out)
+    return mp3, f"✅ Klar: `{name}` (även som MP3)  \n🎼 Beskrivning till AI:n: *{en}*  \n🎲 Frö: **{name.split('_')[2]}** (skriv in det för att få samma låt igen)", [out, mp3]
 
 
-def do_song(desc, lyrics, write, lang_name, secs, bpm, seed, progress=gr.Progress()):
+def _lang(name):
+    return music.LANGUAGES.get(name, "sv")
+
+
+def _song_md(wavs, info, write):
+    seeds = info.get("seeds") or [info.get("seed")]
+    md = (f"✅ Klar: {len(wavs)} version{'er' if len(wavs) > 1 else ''} · 🎲 Frö: **{seeds[0]}** "
+          f"(samma frö + samma text = samma låt)  \n🎼 Stil: *{(info.get('caption') or '')[:300]}*")
+    if write:
+        md += "  \n✍️ AI:n skrev texten – den står i rutan *Låttext*. Ändra den gärna och tryck *Skapa låt* igen."
+    return md
+
+
+def do_song(desc, lyrics, write, lang_name, secs, bpm, seed, variants, progress=gr.Progress()):
     desc = (desc or "").strip()
     lyrics = (lyrics or "").strip()
-    lang = music.LANGUAGES.get(lang_name, "sv")
+    lang = _lang(lang_name)
     if not desc and not lyrics:
         raise gr.Error("Beskriv låten eller skriv en låttext.")
     write = lang != "none" and (bool(write) or not lyrics)
     try:
-        wav, info = music.song(to_english(desc) if desc else "", query=desc, lyrics=lyrics, write_lyrics=write,
-                               language=lang, seconds=float(secs), bpm=int(bpm or 0), seed=int(seed),
-                               progress=progress)
+        wavs, info = music.song(to_english(desc) if desc else "", query=desc, lyrics=lyrics, write_lyrics=write,
+                                language=lang, seconds=float(secs), bpm=int(bpm or 0), seed=int(seed),
+                                variants=2 if str(variants).startswith("2") else 1, progress=progress)
+        mp3s = [music.to_mp3(w) for w in wavs]
     except Exception as e:
         err(e)
-    md = (f"✅ Klar: `{os.path.basename(wav)}`  \n🎲 Frö: **{info.get('seed')}** (samma frö + samma text = samma låt)  \n"
-          f"🎼 Stil: *{info.get('caption', '')[:300]}*")
-    if write:
-        md += "  \n✍️ AI:n skrev texten – den står i rutan *Låttext*. Ändra den gärna och tryck *Skapa låt* igen."
-    new_lyrics = info.get("lyrics") or lyrics
-    return wav, md, new_lyrics, False
+    v2 = mp3s[1] if len(mp3s) > 1 else None
+    files = wavs + mp3s
+    return (mp3s[0], gr.update(value=v2, visible=bool(v2)), _song_md(wavs, info, write),
+            info.get("lyrics") or lyrics, False, files, files, wavs[0], wavs[0])
+
+
+def pick_song(cur, which):
+    """Använd version 1 eller 2 i redigering och musikvideo."""
+    wavs = [f for f in (cur or []) if f.endswith(".wav")]
+    if not wavs:
+        raise gr.Error("Skapa en låt först.")
+    i = 1 if which == 2 and len(wavs) > 1 else 0
+    gr.Info(f"Version {i + 1} vald")
+    return wavs[i], wavs[i]
+
+
+def do_edit(src, mode, start, end, desc, lyrics, lang_name, strength, seed, progress=gr.Progress()):
+    if not src:
+        raise gr.Error("Välj eller ladda upp en låt först.")
+    cap = to_english(desc) if (desc or "").strip() else ""
+    try:
+        if mode.startswith("Gör om"):
+            if float(end) <= float(start):
+                raise ValueError("Slutet måste komma efter början.")
+            wavs, info = music.repaint(src, start, end, cap or "same style as the rest of the song", lyrics or "",
+                                       _lang(lang_name), int(seed), progress)
+        else:
+            if not cap:
+                raise ValueError("Beskriv den nya stilen, t.ex. 'akustisk version med piano och stråkar'.")
+            wavs, info = music.cover(src, cap, float(strength), lyrics or "", _lang(lang_name), int(seed), progress)
+        mp3 = music.to_mp3(wavs[0])
+    except Exception as e:
+        err(e)
+    return mp3, f"✅ Klar · 🎲 Frö: **{info.get('seed')}**", [wavs[0], mp3], wavs[0]
+
+
+def do_video(song, lyrics, desc, style, aspect, lang_name, subs, moving, face, progress=gr.Progress()):
+    try:
+        return musicvideo.make(song, lyrics or "", desc or "", style, aspect, _lang(lang_name), bool(subs),
+                               bool(moving), face, progress)
+    except Exception as e:
+        err(e)
+
+
+def do_music_mp3(*args, **kw):
+    out = do_music(*args, **kw)
+    return out, [out, music.to_mp3(out)]
 
 
 def add_film(path, cur):
@@ -227,7 +284,7 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 with gr.Row():
                     a_model = gr.Radio(VIDEO_MODELS, value=VIDEO_MODELS[0], label="Videomodell")
                     a_sfx = gr.Checkbox(True, label="Ljudeffekter (MMAudio)")
-                a_mood = gr.Dropdown(music.ALL_MOODS, value=list(music.MOODS)[0], label="Musik (🤖 = AI-musik, tar några min extra)")
+                a_mood = gr.Dropdown(music.ALL_MOODS, value=list(music.MOODS)[0], label="Musik (🤖 = AI-musik med ACE-Step – får säljas, tar några min extra)")
                 a_go = gr.Button("2. Gör filmen", variant="primary")
                 a_out = gr.Video(label="Färdig film")
 
@@ -310,10 +367,11 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
             v_out = gr.Audio(label="Resultat", type="filepath")
 
     with gr.Tab("5. Musik"), gr.Tabs():
+        cur_song = gr.State([])
         with gr.Tab("🎤 Låt med sång (ACE-Step)"):
             gr.Markdown("Hela låtar med **sång** – på svenska, engelska m.fl. – eller instrumentalt. "
                         "Skriv egen text eller låt AI:n skriva den. Ca 1–3 min per låt "
-                        "(första gången installeras ACE-Step, ca 10–15 min).")
+                        "(första gången installeras ACE-Step, ca 10–15 min – det startar redan när studion startar).")
             with gr.Row():
                 with gr.Column():
                     sg_desc = gr.Textbox(label="Beskriv låten (stil, instrument, stämning, röst)", lines=3,
@@ -326,16 +384,66 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                     with gr.Row():
                         sg_lang = gr.Dropdown(list(music.LANGUAGES), value="Svenska", label="Språk")
                         sg_secs = gr.Slider(0, 240, value=0, step=5, label="Längd (sek, 0 = efter texten)")
+                    sg_var = gr.Radio(["1 version", "2 versioner (välj den bästa)"], value="2 versioner (välj den bästa)",
+                                      label="Antal versioner")
                     with gr.Accordion("Mer", open=False):
                         sg_bpm = gr.Number(0, precision=0, label="Tempo i bpm (0 = AI:n väljer)")
                         sg_seed = gr.Number(-1, precision=0, label="Frö (-1 = slumpa)")
                     sg_btn = gr.Button("🎤 Skapa låt", variant="primary")
                 with gr.Column():
-                    sg_out = gr.Audio(label="Låt", type="filepath")
+                    sg_out = gr.Audio(label="Version 1", type="filepath")
+                    sg_out2 = gr.Audio(label="Version 2", type="filepath", visible=False)
                     sg_info = gr.Markdown()
+                    with gr.Row():
+                        sg_use1 = gr.Button("✔ Använd version 1", size="sm")
+                        sg_use2 = gr.Button("✔ Använd version 2", size="sm")
+                    gr.Markdown("<small>Vald version används i <b>Redigera låt</b> och <b>Musikvideo</b>.</small>")
+                    sg_files = gr.File(label="Ladda ner (WAV och MP3)", file_count="multiple")
                     gr.Markdown("<small>💡 Märk upp texten med <b>[verse]</b>, <b>[chorus]</b>, <b>[bridge]</b> för "
                                 "tydligare låtform. ACE-Step har MIT-licens – du får använda låtarna kommersiellt, "
                                 "men se till att texten är din egen.</small>")
+        with gr.Tab("✂️ Redigera låt"):
+            gr.Markdown("Gör om **en del** av en låt (resten behålls), eller gör en **ny version i en annan stil**. "
+                        "Använd en låt du gjort här, eller ladda upp en egen.")
+            with gr.Row():
+                with gr.Column():
+                    ed_src = gr.Audio(label="Låt att ändra", type="filepath")
+                    ed_mode = gr.Radio(["Gör om en del", "Ny stil (hela låten)"], value="Gör om en del", label="Vad vill du göra?")
+                    with gr.Row():
+                        ed_start = gr.Number(30, label="Från (sek)")
+                        ed_end = gr.Number(45, label="Till (sek)")
+                    ed_desc = gr.Textbox(label="Beskrivning", lines=2,
+                                         placeholder="Gör om en del: t.ex. 'gitarrsolo'. Ny stil: t.ex. 'akustisk version med piano och stråkar'")
+                    ed_lyrics = gr.Textbox(label="Låttext (samma som låten, ändra rader du vill byta)", lines=6)
+                    with gr.Row():
+                        ed_lang = gr.Dropdown(list(music.LANGUAGES), value="Svenska", label="Språk")
+                        ed_str = gr.Slider(0.1, 1.0, value=0.5, step=0.05,
+                                           label="Ny stil: hur mycket av originalet som behålls")
+                    ed_seed = gr.Number(-1, precision=0, label="Frö (-1 = slumpa)")
+                    ed_btn = gr.Button("✂️ Ändra låten", variant="primary")
+                with gr.Column():
+                    ed_out = gr.Audio(label="Resultat", type="filepath")
+                    ed_info = gr.Markdown()
+                    ed_files = gr.File(label="Ladda ner (WAV och MP3)", file_count="multiple")
+        with gr.Tab("🎬 Musikvideo"):
+            gr.Markdown("Gör en musikvideo av en låt: **bilder som följer texten**, mjuka kamerarörelser och "
+                        "**texten i takt med sången**. Ca 3–6 min för en låt (längre med rörliga scener).")
+            with gr.Row():
+                with gr.Column():
+                    mv_song = gr.Audio(label="Låt", type="filepath")
+                    mv_lyrics = gr.Textbox(label="Låttext (för undertexter och bildernas motiv)", lines=6)
+                    mv_desc = gr.Textbox(label="Vad ska synas? (miljö, person, känsla)", lines=2,
+                                         placeholder="ett gäng vänner vid en sjö i Sverige en sommarkväll, gyllene ljus")
+                    with gr.Row():
+                        mv_style = gr.Dropdown(list(musicvideo.STYLES), value="Filmisk", label="Bildstil")
+                        mv_aspect = gr.Radio(["9:16", "16:9", "1:1"], value="9:16", label="Format")
+                    with gr.Row():
+                        mv_lang = gr.Dropdown(list(music.LANGUAGES), value="Svenska", label="Språk i sången")
+                        mv_subs = gr.Checkbox(True, label="Text i takt med sången")
+                        mv_move = gr.Checkbox(False, label="Rörliga scener (LTX, +1–2 min per scen)")
+                    mv_face = gr.Image(label="Samma person i bilderna (valfritt)", type="filepath", height=180)
+                    mv_btn = gr.Button("🎬 Gör musikvideo", variant="primary")
+                mv_out = gr.Video(label="Musikvideo")
         with gr.Tab("🤖 AI-musik (MusicGen)"):
             gr.Markdown("Beskriv musiken – gärna **stil, instrument, stämning och tempo** – eller välj en färdig stil. "
                         "Svenska översätts automatiskt. Ingen sång, bara instrument. "
@@ -358,8 +466,10 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 with gr.Column():
                     am_out = gr.Audio(label="Resultat", type="filepath")
                     am_info = gr.Markdown()
+                    am_files = gr.File(label="Ladda ner (WAV och MP3)", file_count="multiple")
                     gr.Markdown("<small>MusicGen-modellerna har licensen CC-BY-NC 4.0: fritt för egna och "
-                                "icke-kommersiella filmer, men inte för att sälja eller tjäna pengar på.</small>")
+                                "icke-kommersiella filmer, men inte för att sälja. Vill du sälja: använd "
+                                "<b>Låt med sång</b> och välj språk <i>Instrumental</i> (ACE-Step, MIT).</small>")
         with gr.Tab("Enkel musik (kod)"):
             gr.Markdown("Snabb bakgrundsmusik som skapas direkt med kod – ingen AI, inga licensfrågor.")
             with gr.Row():
@@ -368,7 +478,9 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                     m_mood = gr.Dropdown(list(music.MOODS), value=list(music.MOODS)[0], label="Stämning")
                     m_nat = gr.Checkbox(True, label="Naturljud")
                     m_btn = gr.Button("Skapa musik", variant="primary")
-                m_out = gr.Audio(label="Resultat", type="filepath")
+                with gr.Column():
+                    m_out = gr.Audio(label="Resultat", type="filepath")
+                    m_files = gr.File(label="Ladda ner (WAV och MP3)", file_count="multiple")
 
     with gr.Tab("6. Bygg film"):
         gr.Markdown("Lägg in **en bild eller ett klipp per scen** i rätt ordning och skriv **en replik per rad**. "
@@ -405,10 +517,18 @@ with gr.Blocks(title="Filmverkstan Studio") as app:
                 [s_out, s_info])
     t_btn.click(do_talk, [t_img, t_text, t_audio, t_engine, t_ref, t_enh, t_fast, t_expr, t_lips], t_out)
     v_btn.click(do_voice, [v_text, v_engine, v_ref, v_style, v_speed, v_emo], v_out)
-    m_btn.click(do_music, [m_secs, m_mood, m_nat], m_out)
-    sg_btn.click(do_song, [sg_desc, sg_lyrics, sg_write, sg_lang, sg_secs, sg_bpm, sg_seed],
-                 [sg_out, sg_info, sg_lyrics, sg_write])
-    am_btn.click(do_music_ai, [am_desc, am_style, am_secs, am_size, am_seed, am_guid, am_nat], [am_out, am_info])
+    m_btn.click(do_music_mp3, [m_secs, m_mood, m_nat], [m_out, m_files])
+    sg_btn.click(do_song, [sg_desc, sg_lyrics, sg_write, sg_lang, sg_secs, sg_bpm, sg_seed, sg_var],
+                 [sg_out, sg_out2, sg_info, sg_lyrics, sg_write, cur_song, sg_files, ed_src, mv_song]).then(
+        lambda l, lang: (l, l, lang, lang), [sg_lyrics, sg_lang], [ed_lyrics, mv_lyrics, ed_lang, mv_lang])
+    sg_use1.click(lambda c: pick_song(c, 1), cur_song, [ed_src, mv_song])
+    sg_use2.click(lambda c: pick_song(c, 2), cur_song, [ed_src, mv_song])
+    ed_btn.click(do_edit, [ed_src, ed_mode, ed_start, ed_end, ed_desc, ed_lyrics, ed_lang, ed_str, ed_seed],
+                 [ed_out, ed_info, ed_files, mv_song])
+    mv_btn.click(do_video, [mv_song, mv_lyrics, mv_desc, mv_style, mv_aspect, mv_lang, mv_subs, mv_move, mv_face],
+                 mv_out)
+    am_btn.click(do_music_ai, [am_desc, am_style, am_secs, am_size, am_seed, am_guid, am_nat],
+                 [am_out, am_info, am_files])
     s_add.click(add_film, [s_out, film], [film, f_files])
     t_add.click(add_film, [t_out, film], [film, f_files])
     f_btn.click(do_film, [f_files, f_lines, f_aspect, f_engine, f_ref, f_speed, f_mood, f_nat, f_subs, f_music], f_out)
@@ -420,5 +540,6 @@ if __name__ == "__main__":
         from common import env as _env
         _sp.Popen([sys.executable, str(Path(__file__).with_name("prefetch.py"))], env={**_env(), "HF_HUB_DISABLE_PROGRESS_BARS": "1"})
         print("⏬ Laddar ner AI-modellerna i bakgrunden – du kan börja direkt.", flush=True)
+    music.install_in_background()   # ACE-Step (låtar med sång) installeras medan du gör annat
     app.queue(default_concurrency_limit=1).launch(share=True, allowed_paths=[str(OUT), "/content", "/kaggle/working"], debug=True,
                                                  theme=gr.themes.Soft(primary_hue="green"))

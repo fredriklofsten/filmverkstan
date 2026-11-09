@@ -58,10 +58,16 @@ if a.get("face"):
 
 neg = ("cartoon, painting, illustration, 3d render, deformed, distorted face, bad hands, extra fingers, "
        "blurry, low quality, text, watermark, logo")
-prompt = a["prompt"].strip()
-if "photo" not in prompt.lower():
-    prompt = "RAW photo, photorealistic, " + prompt
-count = int(a.get("count", 1))
+if a.get("style"):   # konstnärlig stil (t.ex. målning, anime): förbjud inte målningar/illustrationer
+    neg = "deformed, distorted face, bad hands, extra fingers, blurry, low quality, text, watermark, logo"
+def fix(p):
+    p = p.strip()
+    return p if "photo" in p.lower() or a.get("style") else "RAW photo, photorealistic, " + p
+
+
+# "prompts": en lista = en bild per beskrivning (t.ex. musikvideo), annars "count" bilder av samma beskrivning
+prompts = [fix(p) for p in a["prompts"]] if a.get("prompts") else [fix(a["prompt"])] * int(a.get("count", 1))
+count = len(prompts)
 seed = int(a.get("seed", -1))
 for i in range(count):
     s = seed + i if seed >= 0 else int.from_bytes(os.urandom(4), "little")
@@ -70,7 +76,7 @@ for i in range(count):
         wp((i + (step + 1) / steps) / count * 0.98, f"Bild {i + 1} av {count}")
         return k
     extra = {"ip_adapter_image": face} if face is not None else {}
-    img = pipe(prompt=prompt, negative_prompt=neg, width=w, height=h, num_inference_steps=steps,
+    img = pipe(prompt=prompts[i], negative_prompt=neg, width=w, height=h, num_inference_steps=steps,
                guidance_scale=float(a.get("guidance", 1.5)), generator=g, callback_on_step_end=cb,
                **extra).images[0]
     path = new_path("bild", "png")
